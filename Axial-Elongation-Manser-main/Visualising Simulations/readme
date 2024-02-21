@@ -1,0 +1,10 @@
+VISUALISING SIMULATIONS
+
+These were all run locally on my laptop.
+
+The most important script here is Animate_tracks.py, which plots the output .csv files from main.py using Mayavi. The 'run' variable at the top must match the name of the tracks.
+
+Find_Cell_Tracking.py outputs single frames for each simulation (e.g used in Fig. 3.2 in my master's report).
+
+nearest_neighbours_analysis.py does nearest neighbours analysis on the position along the A-P axis of each cell.
+ 

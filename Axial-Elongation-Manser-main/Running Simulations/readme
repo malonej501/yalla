@@ -1,0 +1,21 @@
+
+RUNNING SIMULATIONS
+
+This was done remotely on Porcupine using Jupyter notebooks. Porcupine is a supercomputer in the Steventon Lab.
+
+The file organisation is as follows:
+-Running Simulations
+  -main.py
+  -Frames
+    -17_18_0.npy
+    -17_18_10.npy
+    -17_18_20.npy
+    ....
+    -17_18_100.npy
+    -17S_RF_PSM_Detailed.csv
+
+To run the simulations, the Frames file must be unzipped as shown above. In this repository it is zipped to save storage.
+The numpy files store the border shape for each time step (0 to 100 in steps of 10 each).
+17S_RF_PSM_Detailed.csv gives the starting position of each cells as observed by Lewis Thomson.
+
+Once main.py has finished running, it will output a zipped file saves.zip. This contains (for each simulation run in main.py) the files tracks_frame_0_0.csv, tracks_x_0_0.csv, tracks_y_0_0.csv and tracks_z_0_0.csv. tracks_frame_0_0.csv says when the frame was changed and tracks_x_0_0.csv gives the x coordinates of each cell for each timestep. Same for tracks_y_0_0.csv and tracks_z_0_0.csv. I've included an example saves.zip file here.

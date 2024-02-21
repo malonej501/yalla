@@ -1,0 +1,21 @@
+CREATING FRAMES
+
+These are the instructions for creating the frames of the PSM from an Imaris .wrl file (from Lewis Thomson). I would do all this on locally on my computer.
+
+The process to create the animation frames from the nth somite stage to the (n+1)th somite stage is:
+  1) Make sure the .wrl file includes a reference axis and origin (for some reason Imaris doesn't export the surfaces at each somite stage with the same origin).
+  2) Using Blender
+    a) Open the nth somite stage PSM .wrl file in Blender.
+    b) Constrain all the different axis object and PSM surface with the origin sphere (so that whererver the origin sphere moves, the axes and PSM surface will follow).
+    c) Center the origin at the Blender origin by using the snap tool, then align the axes by creating temporary planes in line with the axes.
+    d) Unconstrain the axes and sphere then delete them, so that you just have the PSM aligned.
+    e) Export as an STL file, then repeat a)-d) with the (n+1)th somite stage PSM, and the somite for the (n+1) somite stage. Save the (n+1)th stage somite and PSM together as one surface.
+    f) Create a new Blender project. Import the nth stage surrface and the n+1th stage surface you have just made. Use the decimate tool to reduce them to about 10% of their original size.
+    e) Create keyframes for the nth stage surface at time 0, and keyframes for the n+1th stage surface at time 100.
+    f) Use the shrinkwrap function to create an animation between the two surfaces.
+    e) Export 10 frames as STL files (i.e one at time 0, one at time 10, ...). Or more if you want more animation frames. Name them n_n+1_0, n_n+1_10 etc. (i.e for the 17 somite stage to the 18th somite stage they are called 17_18_0, 17_18_10 etc)
+  3) Each frame needs to be converted into a numpy array that Mayavi can use. To do this, put them all in a folder with STL_to_mayavi_triangles.py, then run that program (making sure you set the right stages at the top of the script).
+  4) You should now have 10 (or however many you wanted) numpy files.
+ 
+ 
+I have included animations for somite stages 17-18 and 18-20 here, although I only ended up using 17-18 in my project.
