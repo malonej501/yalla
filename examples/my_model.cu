@@ -6,12 +6,12 @@
 // The values for "-std" and "-arch" flags will depend on your version of CUDA and the specific GPU model you have respectively.
 // e.g. -std=c++14 works for CUDA version 11.6 and -arch=sm_86 corresponds to the generation of NVIDIA Geforce 30XX cards.
 
-#include "/home/liebisch/yalla/include/solvers.cuh"
-#include "/home/liebisch/yalla/include/dtypes.cuh"
-#include "/home/liebisch/yalla/include/inits.cuh"  
-#include "/home/liebisch/yalla/include/property.cuh"
-#include "/home/liebisch/yalla/include/utils.cuh"  
-#include "/home/liebisch/yalla/include/vtk.cuh"
+#include "../include/solvers.cuh"
+#include "../include/dtypes.cuh"
+#include "../include/inits.cuh"  
+#include "../include/property.cuh"
+#include "../include/utils.cuh"  
+#include "../include/vtk.cuh"
 
 const auto r_max = 1.2f;                        // Max contact distance between cells
 const auto n_0 = 500;                           // Initial number of cells
@@ -46,7 +46,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
 int main(int argc, char const* argv[])
 {
-    Solution<float3, David_Gabriel_solver> cells{n_0, 50, r_max};
+    Solution<float3, Gabriel_solver> cells{n_0, 50, r_max};
     *cells.h_n = n_0;
     random_sphere(0.7, cells);
 

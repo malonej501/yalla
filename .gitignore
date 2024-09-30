@@ -5,3 +5,5 @@ output/
 *.out
 *.zip
 venv/
+run/exec
+run/exec.sh
