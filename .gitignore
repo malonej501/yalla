@@ -4,3 +4,4 @@ output/
 18_20_frames/
 *.out
 *.zip
+venv/
