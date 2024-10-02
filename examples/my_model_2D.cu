@@ -16,11 +16,8 @@
 const float r_max = 1.2;                        // Max contact distance between cells
 const int n_0 = 500;                           // Initial number of cells
 const int n_max = 200000;                       // Max number of cells
-const float c_div = 0.005;                      // Probability of cell division per iteration
-const float noise = 0.4;                        // Magnitude of noise returned by generate_noise
 
-
-const int cont_time = 100;                  // Simulation duration in arbitrary time units 1000 = 40h ; 750 = 30h
+const int cont_time = 1000;                  // Simulation duration in arbitrary time units 1000 = 40h ; 750 = 30h
 const float dt = 0.1;                           // Time step for Euler integration
 
 // Macro that builds the cell variable type
@@ -52,7 +49,8 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
     dF.x += r.x * F / dist;
     dF.y += r.y * F / dist;
-    dF.z += r.z * F / dist;
+    //dF.z += r.z * F / dist;
+    dF.z += 0;
 
     return dF;
 }
@@ -61,38 +59,39 @@ __global__ void generate_noise(int n, curandState* d_state) { // Weiner process 
     auto i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
 
-    float D = noise; // the magnitude of random noise - set to 0 for deterministic simulation
+    float D = 0; // the magnitude of random noise - set to 0 for deterministic simulation
 
     // return noise for every attribute of the cell in this case x,y,z
-    d_W[i].x = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt; // pick random number from gaussian and scale by D and dt
+    d_W[i].x = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
     d_W[i].y = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
-    d_W[i].z = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
+    //d_W[i].z = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
+    d_W[i].z = 0;
 }
 
 __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X, float3* d_old_v, int* d_n_cells) {
     int i = blockIdx.x * blockDim.x + threadIdx.x; // get the index of the current cell
     if (i >= n_cells) return; // return nothing if the index is greater than n_cells
-    if (n_cells >= (n_max * 0.9)) return; // return nothing if the no. cells starts to approach the max
+    if (n_cells >= (n_max * 0.9)) return;
 
-    float rnd = curand_uniform(&d_state[i]); // generate random number between 0 and 1
+    float rnd = curand_uniform(&d_state[i]);
     
-    if (rnd > (c_div * dt)) return; // skip the rest of the function if rnd is greater than proliferation rate
+    if (rnd > (0.0002 * dt)) return;
 
-    int n = atomicAdd(d_n_cells, 1); // add the cell
+    int n = atomicAdd(d_n_cells, 1);
 
-    float theta = acosf(2. * curand_uniform(&d_state[i]) - 1); // choose direction of cell addition
+    float theta = acosf(2. * curand_uniform(&d_state[i]) - 1);
     float phi = curand_uniform(&d_state[i]) * 2 * M_PI;
 
-    // add the coordinates of the new cell
     d_X[n].x = d_X[i].x + 0.8 / 4 * sinf(theta) * cosf(phi);
     d_X[n].y = d_X[i].y + 0.8 / 4 * sinf(theta) * sinf(phi);
-    d_X[n].z = d_X[i].z + 0.8 / 4 * cosf(theta);
+    d_X[n].z = 0;
 
-    d_old_v[n] = d_old_v[i]; // mean displacement of the last timestep of the neighbours
+    d_old_v[n] = d_old_v[i];
 
     d_mechanical_strain[n] = 0.0;
     d_cell_type[n] = 1;
 }
+
 
 
 int main(int argc, char const* argv[])
@@ -113,7 +112,8 @@ int main(int argc, char const* argv[])
     
     Solution<float3, Gabriel_solver> cells{n_max, 50, r_max};
     *cells.h_n = n_0;
-    random_sphere(0.7, cells);
+    //random_sphere(0.7, cells);
+    random_disk_z(0.7, cells);
 
     cells.copy_to_device();
 
@@ -146,11 +146,11 @@ int main(int argc, char const* argv[])
     for (int time_step = 0; time_step <= cont_time; time_step++) {
         for (float T = 0.0; T < 1.0; T+=dt) {
             proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
-            generate_noise<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
+            generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
             cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);    
         }
 
-        if(time_step % 1 == 0){
+        if(time_step % 10 == 0){
             cells.copy_to_host();
             mechanical_strain.copy_to_host();
             cell_type.copy_to_host();
