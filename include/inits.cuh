@@ -31,6 +31,25 @@ void random_disk(
 }
 
 template<typename Pt, template<typename> class Solver>
+void random_disk_z(
+    float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
+{
+    assert(n_0 < *points.h_n);
+    std::random_device rd;
+    srand(rd());
+    // Radius based on hexagonal lattice
+    auto r_max = pow((*points.h_n - n_0) / 0.9069, 1. / 2) * dist_to_nb / 2;
+    for (auto i = n_0; i < *points.h_n; i++) {
+        auto r = r_max * pow(rand() / (RAND_MAX + 1.), 1. / 2);
+        auto phi = rand() / (RAND_MAX + 1.) * 2 * M_PI;
+        points.h_X[i].x = r * sin(phi);
+        points.h_X[i].y = r * cos(phi);
+        points.h_X[i].z = 0;
+    }
+    points.copy_to_device();
+}
+
+template<typename Pt, template<typename> class Solver>
 void random_sphere(
     float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
 {
