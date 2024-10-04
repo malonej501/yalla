@@ -13,11 +13,15 @@
 #include "../include/utils.cuh"  
 #include "../include/vtk.cuh"
 
-const float r_max = 1.2;                        // Max contact distance between cells
+const float r_max = 1.2;                        // Max distance betwen two cells for which they will interact
 const int n_0 = 500;                           // Initial number of cells
 const int n_max = 200000;                       // Max number of cells
 const float c_div = 0.005;                      // Probability of cell division per iteration
-const float noise = 0.4;                        // Magnitude of noise returned by generate_noise
+const float noise = 0.5;                        // Magnitude of noise returned by generate_noise
+const float self_adh = 3.0;                     // Strength of adhesion
+const float non_self_rep = 4.0;                 // Strength of repulsion
+const float rep_ulim = 0.7;                      // The maximum distance between two cells for which they will repel
+const float adh_llim = 0.8;                     // The minimum distance between two cells for which they will atract
 
 
 const int cont_time = 100;                  // Simulation duration in arbitrary time units 1000 = 40h ; 750 = 30h
@@ -42,11 +46,12 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     }
     if (dist > r_max) return dF;
 
-    float k_adh = (d_cell_type[i] == d_cell_type[j]) ? 3.0 : 1.0; // if the cell types are the same set adhesion to 3.0 if not then 1.0
-    float k_rep = (d_cell_type[i] == d_cell_type[j]) ? 1.0 : 3.0;
+    // we define the strength of adhesion and repulsion
+    float k_adh = (d_cell_type[i] == d_cell_type[j]) ? self_adh : 1.0; // if the cell types are the same set adhesion to 3.0 if not then 1.0
+    float k_rep = (d_cell_type[i] == d_cell_type[j]) ? 1.0 : non_self_rep;
 
 
-    float F = (k_adh * fmaxf(0.7 - dist, 0) - k_rep * fmaxf(dist - 0.8, 0)); // forces are also dependent on adhesion and repulsion between cell types
+    float F = (k_rep * fmaxf(rep_ulim - dist, 0) - k_adh * fmaxf(dist - adh_llim, 0)); // forces are also dependent on adhesion and repulsion between cell types
     // printf("%f\n", F);
     d_mechanical_strain[i] += F; // mechanical strain is the sum of forces on the cell
 

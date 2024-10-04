@@ -16,6 +16,14 @@
 const float r_max = 1.2;                        // Max contact distance between cells
 const int n_0 = 500;                           // Initial number of cells
 const int n_max = 200000;                       // Max number of cells
+const float c_div = 0.0005;                      // Probability of cell division per iteration
+const float noise = 0.2;                        // Magnitude of noise returned by generate_noise
+const float self_adh = 3.0;                     // Strength of adhesion
+const float non_self_rep = 4.0;                 // Strength of repulsion
+const float rep_ulim = 0.7;                      // The maximum distance between two cells for which they will repel
+const float adh_llim = 0.8;                     // The minimum distance between two cells for which they will atract
+
+
 
 const int cont_time = 1000;                  // Simulation duration in arbitrary time units 1000 = 40h ; 750 = 30h
 const float dt = 0.1;                           // Time step for Euler integration
@@ -39,11 +47,11 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     }
     if (dist > r_max) return dF;
 
-    float k_adh = (d_cell_type[i] == d_cell_type[j]) ? 3.0 : 1.0; // if the cell types are the same set adhesion to 3.0 if not then 1.0
-    float k_rep = (d_cell_type[i] == d_cell_type[j]) ? 1.0 : 3.0;
+    float k_adh = (d_cell_type[i] == d_cell_type[j]) ? self_adh : 1.0; // if the cell types are the same set adhesion to 3.0 if not then 1.0
+    float k_rep = (d_cell_type[i] == d_cell_type[j]) ? 1.0 : non_self_rep;
 
 
-    float F = (k_adh * fmaxf(0.7 - dist, 0) - k_rep * fmaxf(dist - 0.8, 0)); // forces are also dependent on adhesion and repulsion between cell types
+    float F = (k_adh * fmaxf(rep_ulim - dist, 0) - k_rep * fmaxf(dist - adh_llim, 0)); // forces are also dependent on adhesion and repulsion between cell types
     // printf("%f\n", F);
     d_mechanical_strain[i] += F; // mechanical strain is the sum of forces on the cell
 
@@ -59,7 +67,7 @@ __global__ void generate_noise(int n, curandState* d_state) { // Weiner process 
     auto i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
 
-    float D = 0; // the magnitude of random noise - set to 0 for deterministic simulation
+    float D = noise; // the magnitude of random noise - set to 0 for deterministic simulation
 
     // return noise for every attribute of the cell in this case x,y,z
     d_W[i].x = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
@@ -75,7 +83,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X, fl
 
     float rnd = curand_uniform(&d_state[i]);
     
-    if (rnd > (0.0002 * dt)) return;
+    if (rnd > (c_div * dt)) return;
 
     int n = atomicAdd(d_n_cells, 1);
 
