@@ -19,10 +19,6 @@ const int n_0 = 500;                           // Initial number of cells
 const int n_max = 200000;                       // Max number of cells
 const float c_div = 0.0005;                      // Probability of cell division per iteration
 const float noise = 0; //0.5;                        // Magnitude of noise returned by generate_noise
-const float self_adh = 3.0;                     // Strength of adhesion
-const float non_self_rep = 4.0;                 // Strength of repulsion
-const float rep_ulim = 0.7;                      // The maximum distance between two cells for which they will repel
-const float adh_llim = 0.8;                     // The minimum distance between two cells for which they will atract
 
 // cell migration parameters
 const float rii = 0.02;                     // Length scales for migration forces for iri-iri (in mm)
@@ -60,14 +56,6 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     if (dist > r_max) return dF;
 
     // we define the strength of adhesion and repulsion
-    //float k_adh = (d_cell_type[i] == d_cell_type[j]) ? self_adh : 1.0; // if the cell types are the same set adhesion to 3.0 if not then 1.0
-    //float k_rep = (d_cell_type[i] == d_cell_type[j]) ? 1.0 : non_self_rep;
-    //float rep = (d_cell_type[i] == 1 and d_cell_type[j] == 1) ? rii
-    // float Adh = (d_cell_type[i] == 1 and d_cell_type[j] == 2) ? Aix : 0;
-    // float adh = (d_cell_type[i] == 1 and d_cell_type[j] == 2) ? aix : 0;
-    // float Rep = (d_cell_type[i] == 1 and d_cell_type[j] == 1) ? Rii : 0;
-    // float rep = (d_cell_type[i] == 1 and d_cell_type[j] == 1) ? rii : 0;
-
     float Adh = 1;
     float adh = 1;
     float Rep = 1;
@@ -100,7 +88,6 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
 
     //float F = (k_rep * fmaxf(rep_ulim - dist, 0) - k_adh * fmaxf(dist - adh_llim, 0)); // forces are also dependent on adhesion and repulsion between cell types
-    //float F = (Adh * r.x * exp(-sqrt(r.x^2 + r.y^2) / adh)) / (adh * sqrt(r.x^2 + r.y^2)) - (Rep * r.x * exp(-sqrt(r.x^2 - r.y^2) / rep) / (rep * sqrt(r.x^2 - r.y^2)));
     // Volkening et al. 2015 force potential, function in terms of distance in n dimensions
     float term1 = Adh/adh * expf(-dist / adh);
     float term2 = Rep/rep * expf(-dist / rep);
