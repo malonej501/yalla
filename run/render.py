@@ -1,33 +1,52 @@
 from vedo import *
+import imageio
 import os
 
-# Specify the folder containing the VTK files
-folder_path = 'saves/volk_2D_short_range_overcrowding_08-10-24'
+folder_path = 'saves/volk_2D_short_range_overcrowding_08-10-24' # directory
+video_length = 10 # in seconds
+cmap = "Set1" # the colour map
+c_prop = "cell_type" # which property of cells do you want to colour
 
 # List all VTK files in the folder
 vtks = [f for f in os.listdir(folder_path) if f.endswith('.vtk')]
 
-print(vtks)
-exit()
 # Sort files if needed
-vtk_files.sort()
+vtks = sorted(vtks, key=lambda x: int(x.split('_')[1].split('.')[0]))
+print(vtks)
 
 # Create a plotter
-plotter = Plotter()
+plt = Plotter(interactive=0)
+plt.show(zoom="tight")
+v=Video(name=f"{folder_path.split('/')[-1]}.mp4", duration=10, backend="imageio")
 
 # Loop through the VTK files and visualize them
-for vtk_file in vtk_files:
+for vtk in vtks:
+    print(vtk)
     # Construct the full file path
-    file_path = os.path.join(folder_path, vtk_file)
+    file_path = os.path.join(folder_path, vtk)
 
     # Read the VTK file
-    mesh = load(file_path)
+    cells = load(file_path)
 
+
+    points = Points(cells).point_size(10)
+    points.cmap("Set1","cell_type")
+    #trace.c(trace.pointdata["cell_type"])
+    #print(trace)
+    # print(trace.pointdata["cell_type"])
+    # exit()
+
+    points.name = "cells"
     # Add the mesh to the plotter
-    plotter += mesh
+    plt.remove("cells").add(points)
 
-    # Show the current frame and wait for a key press
-    plotter.show(interactive=True)
+    plt.render().reset_camera()
+    v.add_frame()
 
-# Close the plotter when done
-plotter.close()
+    #plt.clear()
+    #plt.remove().render()
+    #time.sleep(1)
+
+v.close()
+plt.interactive().close()
+plt.clear()
