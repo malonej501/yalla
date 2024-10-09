@@ -7,7 +7,8 @@ nvcc -std=c++14 -arch=sm_61 ../examples/my_model_2D.cu -o exec
 
 #addqueue -q gpushort -s --gpus 1 --gputype rtx2080with12gb -m 4 ./exec
 # capture console output
-output=$(addqueue -q gpushort -s --gpus 1 --gputype rtx2080with12gb -m 4 ./exec 2>&1)
+output=$(addqueue -c "3_mins" -q gpushort -s --gpus 1 --gputype rtx2080with12gb -m 4 ./exec 2>&1)
+
 
 echo $output
 
