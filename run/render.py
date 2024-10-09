@@ -6,12 +6,15 @@ import sys
 if __name__ == "__main__":
 
     args = sys.argv[1:]
+    print(args)
 
     output_folder = args[0]
 
-    export = args[1]
-
-    folder_path = f'saves/{output_folder}' # directory
+    export = False
+    if len(args) == 2:
+        export = args[1]
+    
+    folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
     print(f"Rendering: {output_folder}")
     video_length = 10 # in seconds
     cmap = "Set1" # the colour map
