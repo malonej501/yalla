@@ -16,9 +16,9 @@
 // global simulation parameters
 const float r_max = 0.2;                        // Max distance betwen two cells for which they will interact
 const int n_max = 200000;                       // Max number of cells
-const float c_div = 0.000005;                    // Probability of cell division per iteration
+const float c_div = 0.00002;                    // Probability of cell division per iteration
 const float noise = 0;//0.5;                        // Magnitude of noise returned by generate_noise
-const int cont_time = 1000;                    // Simulation duration in arbitrary time units 1000 = 40h ; 750 = 30h
+const int cont_time = 10000;                    // Simulation duration in arbitrary time units 1000 = 40h ; 750 = 30h
 const float dt = 0.1;                           // Time step for Euler integration
 
 // tissue initialisation
@@ -148,7 +148,8 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X, fl
     int i = blockIdx.x * blockDim.x + threadIdx.x; // get the index of the current cell
     if (i >= n_cells) return; // return nothing if the index is greater than n_cells
     if (n_cells >= (n_max * 0.9)) return; // return nothing if the no. cells starts to approach the max
-    
+    if (d_cell_type[i] == 1 and d_ngs_type_A[i] > eta) return; // return if iri and the no. iri in nbhd exceeds overcrowding threshold
+    if (d_cell_type[i] == 2 and d_ngs_type_B[i] > kappa) return;
     //printf("$f\n", i)
 
     float rnd = curand_uniform(&d_state[i]); // generate random number between 0 and 1
@@ -265,13 +266,13 @@ int main(int argc, char const* argv[])
             cells.copy_to_host();
             mechanical_strain.copy_to_host();
             cell_type.copy_to_host();
-            ngs_type_A.copy_to_host();
-            ngs_type_B.copy_to_host();
+            // ngs_type_A.copy_to_host();
+            // ngs_type_B.copy_to_host();
             output.write_positions(cells);
             output.write_property(mechanical_strain);
             output.write_property(cell_type);
-            output.write_property(ngs_type_A);
-            output.write_property(ngs_type_B);
+        //     output.write_property(ngs_type_A);
+        //     output.write_property(ngs_type_B);
         }
     }
     return 0;

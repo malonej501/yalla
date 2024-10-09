@@ -50,6 +50,35 @@ void random_disk_z(
 }
 
 template<typename Pt, template<typename> class Solver>
+void volk_zebra_2D(
+    float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
+{
+    assert(n_0 < *points.h_n);
+    //std::random_device rd;
+    //srand(rd());
+    // define 5 stripes
+    std::vector<float> y_pos{0.0,0.45,0.5,0.55,1.1}; //initial positions of cell stripes
+
+    int cellsPer_stripe = *points.h_n / y_pos.size(); // calculate no. cells in each stripe
+    for (int i = 0; i < y_pos.size(); i++) {
+        for (int j = 0; j < cellsPer_stripe; j++) {
+            int index = i * cellsPer_stripe + j;
+            points.h_X[index].x = j * dist_to_nb;
+            points.h_X[index].y = y_pos[i];
+            points.h_X[index].z = 0;
+            // if (i == 2) {
+            //     //points.h_X[index].cell_type = 1; // only cells in the middle stripe are iridophores
+            //     d_cell_type[index] = 1;
+            // } else {
+            //     //points.h_X[index].cell_type = 2;
+            //     d_cell_type[index] = 2;
+            // }
+        }
+    }
+    points.copy_to_device();
+}
+
+template<typename Pt, template<typename> class Solver>
 void random_sphere(
     float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
 {
