@@ -173,7 +173,8 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X, fl
     d_old_v[n] = d_old_v[i];
 
     d_mechanical_strain[n] = 0.0;
-    d_cell_type[n] = 1;
+    //d_cell_type[n] = d_cell_type[i]; // child cells are always the same type as parents
+    d_cell_type[n] = std::rand() % 2 + 1; // child cell type is uniformly random
 }
 
 
@@ -224,9 +225,9 @@ int main(int argc, char const* argv[])
     for (int i = 0; i < n_0; i++) {
         //printf("ypos: %.6f\n", cells.h_X[i].y);
         if (cells.h_X[i].y == 0.5) {
-            cell_type.h_prop[i] = 1;
+            cell_type.h_prop[i] = 1; // make cells in middle stripe iridophores
         } else {
-            cell_type.h_prop[i] = 2;
+            cell_type.h_prop[i] = 2; // make everything else xanthophores
         }
     }
 
