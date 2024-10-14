@@ -17,6 +17,7 @@
 const float r_max = 0.2;                        // Max distance betwen two cells for which they will interact
 const int n_max = 200000;                       // Max number of cells
 const float c_div = 0.00002;                    // Probability of cell division per iteration
+const float c_die = 0.000002;                   // Probability of cell death per iteration
 const float noise = 0;//0.5;                        // Magnitude of noise returned by generate_noise
 const int cont_time = 10000;                    // Simulation duration in arbitrary time units 1000 = 40h ; 750 = 30h
 const float dt = 0.1;                           // Time step for Euler integration
@@ -57,12 +58,12 @@ const float xanRand = 0.005;                    // chance of random xanthophore 
 
 
 
-// Macro that builds the cell variable type
-// MAKE_PT(Cell, u, v); // float3 i .x .y .z .u .v .whatever
+// Macro that builds the cell variable type - instead of type float3 we are making a instance of Cell with attributes x,y,z,u,v where u and v are diffusible chemicals
+MAKE_PT(Cell, u, v); // float3 i .x .y .z .u .v .whatever
 
 __device__ float* d_mechanical_strain; // define global variable for mechanical strain on the GPU (device)
 __device__ int* d_cell_type; // global variable for cell type on the GPU - iridophore=1, xanthophore=2
-__device__ float3* d_W; // global variable for random number from Weiner process for stochasticity
+__device__ Cell* d_W; // global variable for random number from Weiner process for stochasticity
 __device__ int* d_ngs_type_A; // no. iri cells in neighbourhood
 __device__ int* d_ngs_type_B; // no. xan cells in neighbourhood
 
@@ -74,9 +75,25 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // This will be only useful in simulations with a wall and a ghost node
     if (i == j){
         dF += d_W[i]; // add stochasticity from the weiner process to the attributes of the cells
+        // each cell type has a base line production rate of chemical u or v depending on cell type
+        float k_prod = 0.3;
+        dF.u += k_prod * (d_cell_type[i] == 1);
+        dF.v += k_prod * (d_cell_type[i] == 2);
+        
+        // add degredation not dependent on anything
+        float k_deg = 0.03;
+        dF.u -= k_deg * (Xi.u);
+        dF.v -= k_deg * (Xi.v);
+
         return dF;
     }
     if (dist > r_max) return dF;
+
+    // define constants for rate of diffusion
+    float D_u = 0.1;
+    float D_v = 0.01;
+    dF.u = -D_u * r.u; // r.u is the difference in chemical concentration between cells in pair
+    dF.v = -D_v * r.v;
 
     // we define the strength of adhesion and repulsion
     float Adh = 1;
@@ -142,9 +159,12 @@ __global__ void generate_noise(int n, curandState* d_state) { // Weiner process 
     d_W[i].y = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
     //d_W[i].z = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
     d_W[i].z = 0;
+
+    d_W[i].u = 0; // add noise to diffusible chemicals
+    d_W[i].v = 0;
 }
 
-__global__ void proliferation(int n_cells, curandState* d_state, float3* d_X, float3* d_old_v, int* d_n_cells) {
+__global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, float3* d_old_v, int* d_n_cells) {
     int i = blockIdx.x * blockDim.x + threadIdx.x; // get the index of the current cell
     if (i >= n_cells) return; // return nothing if the index is greater than n_cells
     if (n_cells >= (n_max * 0.9)) return;  // return nothing if the no. cells starts to approach the max
@@ -170,13 +190,32 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X, fl
     d_X[n].y = d_X[i].y + 0.8 / 4 * sinf(theta) * sinf(phi);
     d_X[n].z = 0;
 
+    // half the amount of each chemical upon cell division in the parent cell
+    d_X[i].u *= 0.5;
+    d_X[i].v *= 0.5;
+    // and then the child
+    d_X[n].u = d_X[i].u;
+    d_X[n].v = d_X[i].v;
+
     d_old_v[n] = d_old_v[i];
 
     d_mechanical_strain[n] = 0.0;
-    //d_cell_type[n] = d_cell_type[i]; // child cells are always the same type as parents
-    d_cell_type[n] = std::rand() % 2 + 1; // child cell type is uniformly random
+    d_cell_type[n] = d_cell_type[i]; // child cells are always the same type as parents
+    //d_cell_type[n] = rnd % 2 + 1; // child cell type is uniformly random
 }
 
+// __global__ void death (int n_cells, curandState* d_state, Cell* d_X, float3* d_old_v, int* d_n_cells) {
+//     int i = blockIdx.x * blockDim.x + threadIdx.x; // get the index of the current cell
+
+//     float rnd = curand_uniform(&d_state[i]);
+
+//     if (rnd > (c_die * dt)) return; // die with probability c_die * dt
+
+//     d_X[i].x = 0.0f;
+//     d_X[i].y = 0.0f;
+//     d_X[i].z = 0.0f;
+
+// }
 
 
 int main(int argc, char const* argv[])
@@ -192,7 +231,7 @@ int main(int argc, char const* argv[])
 
     /* create host variables*/
     // Wiener process
-    Property<float3> W{n_max, "wiener_process"}; // define a property for the weiner process
+    Property<Cell> W{n_max, "wiener_process"}; // define a property for the weiner process
     cudaMemcpyToSymbol(d_W, &W.d_prop, sizeof(d_W)); // connect the global property defined on the GPU to the property defined in this function
 
     // Mechanical strain
@@ -217,20 +256,23 @@ int main(int argc, char const* argv[])
 
     // Initial conditions
     
-    Solution<float3, Gabriel_solver> cells{n_max, 50, r_max};
+    Solution<Cell, Gabriel_solver> cells{n_max, 50, r_max};
     *cells.h_n = n_0;
     //random_sphere(0.7, cells);
-    //random_disk_z(init_dist, cells);
-    volk_zebra_2D(init_dist, cells);
+    random_disk_z(init_dist, cells);
+    // volk_zebra_2D(init_dist, cells);
+    // for (int i = 0; i < n_0; i++) {
+    //     //printf("ypos: %.6f\n", cells.h_X[i].y);
+    //     if (cells.h_X[i].y == 0.5) { // this is how you access the coordinates of each cell - positions are stored in h_X
+    //         cell_type.h_prop[i] = 1; // make cells in middle stripe iridophores
+    //     } else {
+    //         cell_type.h_prop[i] = 2; // make everything else xanthophores
+    //     }
+    // }
     for (int i = 0; i < n_0; i++) {
-        //printf("ypos: %.6f\n", cells.h_X[i].y);
-        if (cells.h_X[i].y == 0.5) {
-            cell_type.h_prop[i] = 1; // make cells in middle stripe iridophores
-        } else {
-            cell_type.h_prop[i] = 2; // make everything else xanthophores
-        }
+        cells.h_X[i].u = 0; //h_X is host cell
+        cells.h_X[i].v = 0;
     }
-
 
 
     // Initialise properties with zeroes
@@ -240,7 +282,7 @@ int main(int argc, char const* argv[])
         ngs_type_B.h_prop[i] = 0;
     }
 
-    auto generic_function = [&](const int n, const float3* __restrict__ d_X, float3* d_dX) { // then set the mechanical forces to zero on the device
+    auto generic_function = [&](const int n, const Cell* __restrict__ d_X, Cell* d_dX) { // then set the mechanical forces to zero on the device
         // Set these properties to zero after every timestep so they don't accumulate
         thrust::fill(thrust::device, mechanical_strain.d_prop, mechanical_strain.d_prop + cells.get_d_n(), 0.0);
         thrust::fill(thrust::device, ngs_type_A.d_prop, ngs_type_A.d_prop + cells.get_d_n(), 0);
@@ -271,6 +313,7 @@ int main(int argc, char const* argv[])
     for (int time_step = 0; time_step <= cont_time; time_step++) {
         for (float T = 0.0; T < 1.0; T+=dt) {
             proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
+            // death<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate death
             generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
             cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);    
         }
@@ -282,6 +325,8 @@ int main(int argc, char const* argv[])
             output.write_positions(cells);
             output.write_property(mechanical_strain);
             output.write_property(cell_type);
+            output.write_field(cells, "u", &Cell::u); //write the u part of each cell to vtk
+            output.write_field(cells, "v", &Cell::v);
         }
     }
     return 0;
