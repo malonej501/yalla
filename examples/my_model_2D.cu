@@ -62,7 +62,7 @@ const float xanRand = 0.005;                    // chance of random xanthophore 
 MAKE_PT(Cell, u, v); // float3 i .x .y .z .u .v .whatever
 
 __device__ float* d_mechanical_strain; // define global variable for mechanical strain on the GPU (device)
-__device__ int* d_cell_type; // global variable for cell type on the GPU - iridophore=1, xanthophore=2
+__device__ int* d_cell_type; // global variable for cell type on the GPU - iridophore=1, xanthophore=2, DEAD=0
 __device__ Cell* d_W; // global variable for random number from Weiner process for stochasticity
 __device__ int* d_ngs_type_A; // no. iri cells in neighbourhood
 __device__ int* d_ngs_type_B; // no. xan cells in neighbourhood
@@ -193,7 +193,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     // half the amount of each chemical upon cell division in the parent cell
     d_X[i].u *= 0.5;
     d_X[i].v *= 0.5;
-    // and then the child
+    // the child inherits the other half of the amount of the chemical
     d_X[n].u = d_X[i].u;
     d_X[n].v = d_X[i].v;
 
@@ -204,18 +204,20 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     //d_cell_type[n] = rnd % 2 + 1; // child cell type is uniformly random
 }
 
-// __global__ void death (int n_cells, curandState* d_state, Cell* d_X, float3* d_old_v, int* d_n_cells) {
-//     int i = blockIdx.x * blockDim.x + threadIdx.x; // get the index of the current cell
+__global__ void death (int n_cells, curandState* d_state, Cell* d_X, float3* d_old_v, int* d_n_cells) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x; // get the index of the current cell
 
-//     float rnd = curand_uniform(&d_state[i]);
+    float rnd = curand_uniform(&d_state[i]);
 
-//     if (rnd > (c_die * dt)) return; // die with probability c_die * dt
+    if (rnd > (c_die * dt)) return; // die with probability c_die * dt
 
-//     d_X[i].x = 0.0f;
-//     d_X[i].y = 0.0f;
-//     d_X[i].z = 0.0f;
+    // d_X[i].x = 0.0f;
+    // d_X[i].y = 0.0f;
+    d_X[i].z -= r_max * 10; // when cells die, pop them out by 10 times the maximum interaction distance
+    d_cell_type[i] = 0; // set cell type to 0 which means dead
 
-// }
+
+}
 
 
 int main(int argc, char const* argv[])
@@ -313,7 +315,7 @@ int main(int argc, char const* argv[])
     for (int time_step = 0; time_step <= cont_time; time_step++) {
         for (float T = 0.0; T < 1.0; T+=dt) {
             proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
-            // death<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate death
+            death<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate death
             generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
             cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);    
         }
