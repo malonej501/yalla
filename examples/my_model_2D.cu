@@ -56,6 +56,10 @@ const float xanRand = 0.005;                    // chance of random xanthophore 
 // const float xanRand = xanRand*randSwitch;       // if randSwitch = 0, turns off random birth
 // const float xanRand = xanRand*(popSwitch ~= 1); // if no xanthophores included, turn off random xanthophore birth
 
+// cell death parameters
+const float xi = 1.2;                                               // long-range signals for xanthophore death
+const float iriProb = 0.03;                                         // chance of iridophores death due to long-range interactions
+// const float iriProb = iriProb*deathSwitch*(longSwitch == 0);        // if deathSwitch = 0 or longSwitch = 1, sets probability of melanophore death due to long-range interactions to 0
 
 
 // Macro that builds the cell variable type - instead of type float3 we are making a instance of Cell with attributes x,y,z,u,v where u and v are diffusible chemicals
@@ -95,7 +99,11 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     dF.u = -D_u * r.u; // r.u is the difference in chemical concentration between cells in pair
     dF.v = -D_v * r.v;
 
-    // we define the strength of adhesion and repulsion
+    // we define the default strength of adhesion and repulsion
+    // float Adh = 0.001; // use this so that the dead cells achieve a relaxed state
+    // float adh = 0.01;
+    // float Rep = 0.002;
+    // float rep = 0.02;
     float Adh = 1;
     float adh = 1;
     float Rep = 1;
@@ -169,12 +177,16 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     if (i >= n_cells) return; // return nothing if the index is greater than n_cells
     if (n_cells >= (n_max * 0.9)) return;  // return nothing if the no. cells starts to approach the max
 
+    if (d_cell_type[i] == 0) return; // if cell is dead, don't proliferate
+
     // conditions on iri for division
-    if (d_cell_type[i] == 1 and d_ngs_type_A[i] < alpha * d_ngs_type_B[i]) return; // short range condition
+    if (d_cell_type[i] == 1 and d_ngs_type_A[i] < alpha * d_ngs_type_B[i]) return; // short range condition 1
+    //if (d_cell_type[i] == 1 and d_ngs_type_B[i] < beta * d_ngs_type_A[i]) return; // short range condition 2
     if (d_cell_type[i] == 1 and d_ngs_type_A[i] + d_ngs_type_B[i] > eta) return; // overcrowding condition
     
     // conditions on xan for division
-    if (d_cell_type[i] == 2 and d_ngs_type_B[i] < phi * d_ngs_type_A[i]) return; // short range condition
+    if (d_cell_type[i] == 2 and d_ngs_type_B[i] < phi * d_ngs_type_A[i]) return; // short range condition 1
+    //if (d_cell_type[i] == 2 and d_ngs_type_A[i] < psi * d_ngs_type_B[i]) return; // short range condition 2
     if (d_cell_type[i] == 2 and d_ngs_type_A[i] + d_ngs_type_B[i] > kappa) return; // overcrowding condition
 
     float rnd = curand_uniform(&d_state[i]);
@@ -204,18 +216,34 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     //d_cell_type[n] = rnd % 2 + 1; // child cell type is uniformly random
 }
 
-__global__ void death (int n_cells, curandState* d_state, Cell* d_X, float3* d_old_v, int* d_n_cells) {
+__global__ void death(int n_cells, curandState* d_state, Cell* d_X, float3* d_old_v, int* d_n_cells) {
     int i = blockIdx.x * blockDim.x + threadIdx.x; // get the index of the current cell
+    if (i >= n_cells) return; // return nothing if the index is greater than n_cells
+    if (n_cells >= (n_max * 0.9)) return;  // return nothing if the no. cells starts to approach the max
 
-    float rnd = curand_uniform(&d_state[i]);
+    if (d_cell_type[i] == 0) printf("Cell index: %d, Cell type: %d, Position: %f\n", i, d_cell_type[i], d_X[i].z);
 
-    if (rnd > (c_die * dt)) return; // die with probability c_die * dt
+    if (d_cell_type[i] == 0) return; // cells that are already dead cannot die
+    
+    // float rnd = curand_uniform(&d_state[i]);
+
+    // if (rnd > (c_die * dt)) return; // die with probability c_die * dt
+
+    // iridophore death condition
+    if (d_cell_type[i] == 1 and d_ngs_type_B[i] < 2*d_ngs_type_A[i]) return; // if no. xan in nbhd doesn't exceed no. iri, don't die
+
+    // xanthophore death condition
+    if (d_cell_type[i] == 2 and d_ngs_type_A[i] < 2*d_ngs_type_B[i]) return; // if no. iri in nbhd doesn't exceed no. xan, don't die
+
+    // long range iridophore death condition
+
 
     // d_X[i].x = 0.0f;
     // d_X[i].y = 0.0f;
     d_X[i].z -= r_max * 10; // when cells die, pop them out by 10 times the maximum interaction distance
+    //printf("Cell index: %d, Cell type: %d, Position: %f\n", i, d_cell_type[i], d_X[i].z);
     d_cell_type[i] = 0; // set cell type to 0 which means dead
-
+    
 
 }
 
@@ -271,10 +299,10 @@ int main(int argc, char const* argv[])
     //         cell_type.h_prop[i] = 2; // make everything else xanthophores
     //     }
     // }
-    for (int i = 0; i < n_0; i++) {
-        cells.h_X[i].u = 0; //h_X is host cell
-        cells.h_X[i].v = 0;
-    }
+    // for (int i = 0; i < n_0; i++) {
+    //     cells.h_X[i].u = 0; //h_X is host cell
+    //     cells.h_X[i].v = 0;
+    // }
 
 
     // Initialise properties with zeroes
