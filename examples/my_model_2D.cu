@@ -72,6 +72,8 @@ __device__ int* d_cell_type; // global variable for cell type on the GPU - irido
 __device__ Cell* d_W; // global variable for random number from Weiner process for stochasticity
 __device__ int* d_ngs_type_A; // no. iri cells in neighbourhood
 __device__ int* d_ngs_type_B; // no. xan cells in neighbourhood
+__device__ int* d_ngs_type_Ac; // no. iri cells in overcrowded neighbourhood
+__device__ int* d_ngs_type_Bc; // no. xan cells in overcrowded neighbourhood
 __device__ int* d_ngs_type_Ad; // no. iri cells in donut neighbourhood
 __device__ int* d_ngs_type_Bd; // no. xan cells in donut neighbourhood
 
@@ -100,6 +102,11 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         else d_ngs_type_Bd[i] += 1;
     }
     // printf("%f\n", d_ngs_type_Ad[i], d_ngs_type_Bd[i]);
+
+    if (dist < 0.082) {
+        d_ngs_type_Ac[i] += 1;
+        d_ngs_type_Bc[i] += 1;
+    }
 
     //if (dist > r_max) return dF; // Gabriel solver doesn't account for distance when computing neighbourhood, we need to exclude distant pairs
 
@@ -199,12 +206,12 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     // conditions on iri for division
     if (d_cell_type[i] == 1 and d_ngs_type_A[i] < alpha * d_ngs_type_B[i]) return; // short range condition 1
     if (d_cell_type[i] == 1 and d_ngs_type_B[i] < beta * d_ngs_type_A[i]) return; // short range condition 2
-    if (d_cell_type[i] == 1 and d_ngs_type_A[i] + d_ngs_type_B[i] > eta) return; // overcrowding condition
+    if (d_cell_type[i] == 1 and d_ngs_type_Ac[i] + d_ngs_type_Bc[i] > eta) return; // overcrowding condition
     
     // conditions on xan for division
     if (d_cell_type[i] == 2 and d_ngs_type_B[i] < phi * d_ngs_type_A[i]) return; // short range condition 1
     if (d_cell_type[i] == 2 and d_ngs_type_A[i] < psi * d_ngs_type_B[i]) return; // short range condition 2
-    if (d_cell_type[i] == 2 and d_ngs_type_A[i] + d_ngs_type_B[i] > kappa) return; // overcrowding condition
+    if (d_cell_type[i] == 2 and d_ngs_type_Ac[i] + d_ngs_type_Bc[i] > kappa) return; // overcrowding condition
 
     // random cell division
     // float rnd = curand_uniform(&d_state[i]);
@@ -256,8 +263,7 @@ __global__ void death(int n_cells, curandState* d_state, Cell* d_X, float3* d_ol
 
     // long range iridophore death condition
     // if (d_cell_type[i] == 1 and d_X[i].u < xi * d_X[i].v) return; // if the concentration of irid chemical is less conc of xan chemical, don't die
-    if (d_cell_type[i] == 1 and d_ngs_type_Ad[i] < d_ngs_type_Bd[i]) return; // if the no. irid is less than the no. xan in the donut, don't die
-
+    if (d_cell_type[i] == 1 and d_ngs_type_Ad[i] < xi * d_ngs_type_Bd[i]) return; // if the no. irid is less than the no. xan in the donut, don't die
 
 
     // d_X[i].x = 0.0f;
@@ -293,15 +299,20 @@ int main(int argc, char const* argv[])
     // No. iri in neighbourhood
     Property<int> ngs_type_A{n_max, "ngs_type_A"}; // create an instance of the property
     cudaMemcpyToSymbol(d_ngs_type_A, &ngs_type_A.d_prop, sizeof(d_ngs_type_A));
-
     // No. xan in neighbourhood
     Property<int> ngs_type_B{n_max, "ngs_type_B"}; // create an instance of the property
     cudaMemcpyToSymbol(d_ngs_type_B, &ngs_type_B.d_prop, sizeof(d_ngs_type_B));
 
+    // No. iri in overcrowded neighbourhood
+    Property<int> ngs_type_Ad{n_max, "ngs_type_Ac"}; // create an instance of the property
+    cudaMemcpyToSymbol(d_ngs_type_Ac, &ngs_type_Ac.d_prop, sizeof(d_ngs_type_Ac));
+    // No. xan in overcrowded neighbourhood
+    Property<int> ngs_type_Bc{n_max, "ngs_type_Bc"}; // create an instance of the property
+    cudaMemcpyToSymbol(d_ngs_type_Bc, &ngs_type_Bc.d_prop, sizeof(d_ngs_type_Bc));
+
     // No. iri in donut
     Property<int> ngs_type_Ad{n_max, "ngs_type_Ad"}; // create an instance of the property
     cudaMemcpyToSymbol(d_ngs_type_Ad, &ngs_type_Ad.d_prop, sizeof(d_ngs_type_Ad));
-
     // No. xan in donut
     Property<int> ngs_type_Bd{n_max, "ngs_type_Bd"}; // create an instance of the property
     cudaMemcpyToSymbol(d_ngs_type_Bd, &ngs_type_Bd.d_prop, sizeof(d_ngs_type_Bd));
@@ -357,7 +368,8 @@ int main(int argc, char const* argv[])
         ngs_type_B.h_prop[i] = 0;
         ngs_type_Ad.h_prop[i] = 0;
         ngs_type_Bd.h_prop[i] = 0;
-
+        ngs_type_Ac.h_prop[i] = 0;
+        ngs_type_Bc.h_prop[i] = 0;
     }
 
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X, Cell* d_dX) { // then set the mechanical forces to zero on the device
@@ -367,6 +379,8 @@ int main(int argc, char const* argv[])
 	    thrust::fill(thrust::device, ngs_type_B.d_prop, ngs_type_B.d_prop + cells.get_d_n(), 0);
         thrust::fill(thrust::device, ngs_type_Ad.d_prop, ngs_type_Ad.d_prop + cells.get_d_n(), 0);
 	    thrust::fill(thrust::device, ngs_type_Bd.d_prop, ngs_type_Bd.d_prop + cells.get_d_n(), 0);
+        thrust::fill(thrust::device, ngs_type_Ac.d_prop, ngs_type_Ac.d_prop + cells.get_d_n(), 0);
+	    thrust::fill(thrust::device, ngs_type_Bc.d_prop, ngs_type_Bc.d_prop + cells.get_d_n(), 0);  
     };
 
     cells.copy_to_device();
@@ -374,6 +388,8 @@ int main(int argc, char const* argv[])
     cell_type.copy_to_device();
     ngs_type_A.copy_to_device();
     ngs_type_B.copy_to_device();
+    ngs_type_Ac.copy_to_device();
+    ngs_type_Bc.copy_to_device();
     ngs_type_Ad.copy_to_device();
     ngs_type_Bd.copy_to_device();
 
@@ -408,6 +424,8 @@ int main(int argc, char const* argv[])
             cell_type.copy_to_host();
             ngs_type_A.copy_to_host();
             ngs_type_B.copy_to_host();
+            ngs_type_Ac.copy_to_host();
+            ngs_type_Bc.copy_to_host();
             ngs_type_Ad.copy_to_host();
             ngs_type_Bd.copy_to_host();
 
