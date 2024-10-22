@@ -15,16 +15,19 @@
 // N.B. distances are in millimeters so 0.001 = 1 micrometer
 
 // global simulation parameters
-const float r_max = 0.318 + 25;                        // Max distance betwen two cells for which they will interact - set to upper bound of donut
+const float r_max = 0.2;                        // Max distance betwen two cells for which they will interact - set to upper bound of donut
 const int n_max = 200000;                       // Max number of cells
-const float c_div = 0.00002;                    // Probability of cell division per iteration
-const float c_die = 0.000002;                   // Probability of cell death per iteration
+//const float c_div = 0.8;                    // Probability of cell division per iteration
+//const float c_die = 0.05;                   // Probability of cell death per iteration
 const float noise = 0;//0.5;                        // Magnitude of noise returned by generate_noise
-const int cont_time = 10000;                    // Simulation duration in arbitrary time units 1000 = 40h ; 750 = 30h
-const float dt = 0.1;                           // Time step for Euler integration
+const int cont_time = 100;                    // Simulation duration in arbitrary time units 1 = 1 day
+const float dt = 0.01;                           // Time step for Euler integration
+const int no_frames = 100;                      // no. frames of simulation output to vtk - divide the simulation time by this number
 
 // tissue initialisation
 const float init_dist = 0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
+const float A_dist = 0.05;                      // mean distance between iri-iri
+const float B_dist = 0.036;                      // mean distance between xan-xan
 const int n_0 = 500;                            // Initial number of cells
 
 // cell migration parameters
@@ -50,7 +53,7 @@ const float iriRand = 0.03;                     // chance of random melanophore 
 // const float iriRand = iriRand*(popSwitch ~= 2); // if no melanophores included, turns off random iridophore birth
 
 // xanthophore birth parameters
-const float phi = 1.3;                          // short-range signals for xanthophsore birth
+const float phi = 1.3;                          // short-range signals for xanthophore birth
 const float psi = 1.2;                          // long-range signals for xanthophore birth
 const float kappa = 10;                         // cap on max number of xanthophores that can be in omegaLoc before overcrowding
 // const float kappa = kappa + 100000*overSwitch;  // effectively turns off max-density constraint if overSwitch = 1
@@ -97,32 +100,38 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
         return dF;
     }
-    if ((dist > 0.318) and (dist < 0.318 + 0.025)) {
-        if (d_cell_type[j] == 1) d_ngs_type_Ad[i] += 1;
-        else d_ngs_type_Bd[i] += 1;
-    }
-    // printf("%f\n", d_ngs_type_Ad[i], d_ngs_type_Bd[i]);
-
-    if (dist < 0.082) {
-        d_ngs_type_Ac[i] += 1;
-        d_ngs_type_Bc[i] += 1;
-    }
-
-    //if (dist > r_max) return dF; // Gabriel solver doesn't account for distance when computing neighbourhood, we need to exclude distant pairs
-
-    if (dist > 0.075) return dF; // the radius of the inner disc for nearer neighbourhood
-
     // define constants for rate of diffusion
     float D_u = 0.1;
     float D_v = 0.01;
     dF.u = -D_u * r.u; // r.u is the difference in chemical concentration between cells in pair
     dF.v = -D_v * r.v;
 
+
+    // counting cells in different regions
+    if ((dist > 0.318) and (dist < 0.318 + 0.025)) { // count cells in donut
+        if (d_cell_type[j] == 1) d_ngs_type_Ad[i] += 1;
+        else d_ngs_type_Bd[i] += 1;
+    }
+    // printf("%f\n", d_ngs_type_Ad[i], d_ngs_type_Bd[i]);
+    if (dist < 0.082) { // count cells in overcrowding region
+        if (d_cell_type[j] == 1) d_ngs_type_Ac[i] += 1;
+        else d_ngs_type_Bc[i] += 1;
+    }
+    if (dist < 0.075) { // the radius of the inner disc for cell proliferation conditions
+        // count no. each cell type in neighbourhood
+        if (d_cell_type[j] == 1) d_ngs_type_A[i] += 1;
+        else d_ngs_type_B[i] += 1;
+    }
+
+    //if (dist > r_max) return dF; // Gabriel solver doesn't account for distance when computing neighbourhood, we need to exclude distant pairs
+    if (dist > r_max) return dF; // set cutoff for computing forces
+
+
     // we define the default strength of adhesion and repulsion
-    float Adh = 1;
+    float Adh = 0;
     float adh = 1;
-    float Rep = 1;
-    float rep = 1;
+    float Rep = Rix;
+    float rep = rix;
 
     if (diff_adh_rep) {
         if (d_cell_type[i] == 1 and d_cell_type[j] == 1) { // iri -> iri
@@ -149,18 +158,19 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
             Rep = Rxx;
             rep = rxx;
         }
-        if (d_cell_type[i] == 0 and d_cell_type[j] == 0) { // dead -> dead, so dead cells achieve a relaxed state
-            Adh = Aix;
-            adh = aix;
-            Rep = Rix;
-            rep = rix;
-        }
-    } else {
-        Adh = Aix;
-        adh = aix;
-        Rep = Rix;
-        rep = rix;
     }
+    //     if (d_cell_type[i] == 0 and d_cell_type[j] == 0) { // dead -> dead, so dead cells achieve a relaxed state
+    //         Adh = Aix;
+    //         adh = aix;
+    //         Rep = Rix;
+    //         rep = rix;
+    //     }
+    // } else {
+    //     Adh = Aix;
+    //     adh = aix;
+    //     Rep = Rix;
+    //     rep = rix;
+    // }
 
     // Volkening et al. 2015 force potential, function in terms of distance in n dimensions
     float term1 = Adh/adh * expf(-dist / adh);
@@ -172,10 +182,6 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     dF.x -= r.x * F / dist;
     dF.y -= r.y * F / dist;
     dF.z -= 0;
-
-    // count no. each cell type in neighbourhood
-    if (d_cell_type[j] == 1) d_ngs_type_A[i] += 1;
-    else d_ngs_type_B[i] += 1;
 
     return dF;
 }
@@ -192,7 +198,7 @@ __global__ void generate_noise(int n, curandState* d_state) { // Weiner process 
     //d_W[i].z = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
     d_W[i].z = 0;
 
-    d_W[i].u = 0; // add noise to diffusible chemicals
+    d_W[i].u = 0; // add noise to diffusible chemicals - if zero, no noise
     d_W[i].v = 0;
 }
 
@@ -201,7 +207,28 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     if (i >= n_cells) return; // return nothing if the index is greater than n_cells
     if (n_cells >= (n_max * 0.9)) return;  // return nothing if the no. cells starts to approach the max
 
-    if (d_cell_type[i] == 0) return; // if cell is dead, don't divide
+    if (d_cell_type[i] == 0 or d_X[i].y == r_max*10) return; // if cell is dead, don't divide
+
+    // random cell division
+    float rnd = curand_uniform(&d_state[i]);
+    // if (rnd > (c_div * dt)) return;
+    if ((d_cell_type[i] == 1 and rnd < iriRand * 0.01) or (d_cell_type[i] == 2 and rnd < xanRand * 0.01)) {
+        int n = atomicAdd(d_n_cells, 1);
+        float theta = acosf(2. * curand_uniform(&d_state[i]) - 1);
+        float phi = curand_uniform(&d_state[i]) * 2 * M_PI;
+        d_X[n].x = d_X[i].x + 0.6 / 2 * sinf(theta) * cosf(phi);
+        d_X[n].y = d_X[i].y + 0.6 / 2 * sinf(theta) * sinf(phi);
+        d_X[n].z = 0;
+        // half the amount of each chemical upon cell division in the parent cell
+        d_X[i].u *= 0.5;
+        d_X[i].v *= 0.5;
+        // the child inherits the other half of the amount of the chemical
+        d_X[n].u = d_X[i].u;
+        d_X[n].v = d_X[i].v;
+        d_old_v[n] = d_old_v[i];
+        d_mechanical_strain[n] = 0.0;
+        d_cell_type[n] = d_cell_type[i]; // child cells are always the same type as parents
+    }    
 
     // conditions on iri for division
     if (d_cell_type[i] == 1 and d_ngs_type_A[i] < alpha * d_ngs_type_B[i]) return; // short range condition 1
@@ -213,9 +240,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     if (d_cell_type[i] == 2 and d_ngs_type_A[i] < psi * d_ngs_type_B[i]) return; // short range condition 2
     if (d_cell_type[i] == 2 and d_ngs_type_Ac[i] + d_ngs_type_Bc[i] > kappa) return; // overcrowding condition
 
-    // random cell division
-    // float rnd = curand_uniform(&d_state[i]);
-    // if (rnd > (c_div * dt)) return;
+
 
     int n = atomicAdd(d_n_cells, 1);
 
@@ -223,8 +248,10 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     float theta = acosf(2. * curand_uniform(&d_state[i]) - 1);
     float phi = curand_uniform(&d_state[i]) * 2 * M_PI;
 
-    d_X[n].x = d_X[i].x + 0.8 / 4 * sinf(theta) * cosf(phi);
-    d_X[n].y = d_X[i].y + 0.8 / 4 * sinf(theta) * sinf(phi);
+    // d_X[n].x = d_X[i].x + 0.8 / 4 * sinf(theta) * cosf(phi);
+    // d_X[n].y = d_X[i].y + 0.8 / 4 * sinf(theta) * sinf(phi);
+    d_X[n].x = d_X[i].x + init_dist / 2 * sinf(theta) * cosf(phi);
+    d_X[n].y = d_X[i].y + init_dist / 2 * sinf(theta) * sinf(phi);
     d_X[n].z = 0;
 
     // half the amount of each chemical upon cell division in the parent cell
@@ -246,12 +273,12 @@ __global__ void death(int n_cells, curandState* d_state, Cell* d_X, float3* d_ol
     if (i >= n_cells) return; // return nothing if the index is greater than n_cells
     if (n_cells >= (n_max * 0.9)) return;  // return nothing if the no. cells starts to approach the max
 
-    if (d_cell_type[i] == 0) 
+    //if (d_cell_type[i] == 0) 
     //printf("Cell index: %d, Cell type: %d, Position: %f\n", i, d_cell_type[i], d_X[i].z);
 
     if (d_cell_type[i] == 0) return; // cells that are already dead cannot die
     
-    // float rnd = curand_uniform(&d_state[i]);
+    float rnd = curand_uniform(&d_state[i]);
 
     // if (rnd > (c_die * dt)) return; // die with probability c_die * dt
 
@@ -263,16 +290,14 @@ __global__ void death(int n_cells, curandState* d_state, Cell* d_X, float3* d_ol
 
     // long range iridophore death condition
     // if (d_cell_type[i] == 1 and d_X[i].u < xi * d_X[i].v) return; // if the concentration of irid chemical is less conc of xan chemical, don't die
-    if (d_cell_type[i] == 1 and d_ngs_type_Ad[i] < xi * d_ngs_type_Bd[i]) return; // if the no. irid is less than the no. xan in the donut, don't die
-
+    if (d_cell_type[i] == 1 and d_ngs_type_Ad[i] < xi * d_ngs_type_Bd[i] and (rnd > iriProb)) return; // if the no. irid is less than the no. xan in the donut, don't die
+    // added rnd > iriProb from matlab code
 
     // d_X[i].x = 0.0f;
     // d_X[i].y = 0.0f;
     d_X[i].z -= r_max * 10; // when cells die, pop them out by 10 times the maximum interaction distance
     //printf("Cell index: %d, Cell type: %d, Position: %f\n", i, d_cell_type[i], d_X[i].z);
     d_cell_type[i] = 0; // set cell type to 0 which means dead
-    
-
 }
 
 
@@ -304,7 +329,7 @@ int main(int argc, char const* argv[])
     cudaMemcpyToSymbol(d_ngs_type_B, &ngs_type_B.d_prop, sizeof(d_ngs_type_B));
 
     // No. iri in overcrowded neighbourhood
-    Property<int> ngs_type_Ad{n_max, "ngs_type_Ac"}; // create an instance of the property
+    Property<int> ngs_type_Ac{n_max, "ngs_type_Ac"}; // create an instance of the property
     cudaMemcpyToSymbol(d_ngs_type_Ac, &ngs_type_Ac.d_prop, sizeof(d_ngs_type_Ac));
     // No. xan in overcrowded neighbourhood
     Property<int> ngs_type_Bc{n_max, "ngs_type_Bc"}; // create an instance of the property
@@ -328,18 +353,19 @@ int main(int argc, char const* argv[])
     // Initial conditions
     
     //Solution<Cell, Gabriel_solver> cells{n_max, 50, r_max};
-    Solution<Cell, Grid_solver> cells{n_max, 50, r_max*5};
+    // Solution<Cell, Grid_solver> cells{n_max, 100, r_max*5}; //originally using r_max*5
+    Solution<Cell, Grid_solver> cells{n_max, 50, r_max*5}; //originally using r_max*5
     *cells.h_n = n_0;
     //random_sphere(0.7, cells);
     random_disk_z(init_dist, cells);
     // regular_rectangle(init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells); //initialise square with nx=n_0/2 center will be at (y,x) = (1,1)
-    // volk_zebra_2D(init_dist, cells);
+    // volk_zebra_2D(A_dist, cells);
     // for (int i = 0; i < n_0; i++) {
     //     //printf("ypos: %.6f\n", cells.h_X[i].y);
     //     if (cells.h_X[i].y == 0.5) { // this is how you access the coordinates of each cell - positions are stored in h_X
-    //         cell_type.h_prop[i] = 1; // make cells in middle stripe iridophores
+    //         cell_type.h_prop[i] = 2; // make cells in middle stripe xanthophores
     //     } else {
-    //         cell_type.h_prop[i] = 2; // make everything else xanthophores
+    //         cell_type.h_prop[i] = 1; // make everything else iridophores
     //     }
     // }
     // 2 stripe initial condition
@@ -410,15 +436,15 @@ int main(int argc, char const* argv[])
     cells.take_step<pairwise_force>(0.0, generic_function);
 
     // Main simulation loop
-    for (int time_step = 0; time_step <= cont_time; time_step++) {
+    for (int time_step = 0; time_step <= cont_time; time_step ++) {
         for (float T = 0.0; T < 1.0; T+=dt) {
-            proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
-            death<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate death
             generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
-            cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);    
+            proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
+            cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);
+            death<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate death
         }
 
-        if(time_step % 100 == 0){
+        if(time_step % 1 == 0){
             cells.copy_to_host();
             mechanical_strain.copy_to_host();
             cell_type.copy_to_host();
