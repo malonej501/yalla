@@ -29,7 +29,7 @@ const int n_new_cells = 300;                              // no. cells to add to
 const float init_dist = 0.2; //0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
 const float A_dist = 0.05;                      // mean distance between iri-iri
 const float B_dist = 0.036;                      // mean distance between xan-xan
-const int n_0 = 100;                            // Initial number of cells
+const int n_0 = 700;                            // Initial number of cells, 50 of each type and 300 of each staging
 
 // cell migration parameters
 const bool diff_adh_rep = true;                // set to false to turn off differential adhesion and repulsion
@@ -189,34 +189,34 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     if (i >= n_cells) return; // return nothing if the index is greater than n_cells
     if (n_cells >= (n_max * 0.9)) return;  // return nothing if the no. cells starts to approach the max
 
+    if (d_cell_type[i] != -1) return; // skip unless a cell is of staging type
 
+    // if all conditions are met, the cell is moved from the staging area into the actual tissue, if not it is moved to the dead area
+    if (d_cell_type[i] == -1){
+        if (
+            d_ngs_type_A[i] < alpha * d_ngs_type_B[i] and   // short range condition 1
+            d_ngs_type_B[i] < beta * d_ngs_type_A[i] and    // short range condition 2
+            d_ngs_type_Ac[i] + d_ngs_type_Bc[i] > eta       // overcrowding condition
+            ) {
+                d_cell_type[i] = 1;
+                return;
+            }
+    }
+    if (d_cell_type[i] == -2) {
+        if (
+            d_ngs_type_B[i] < phi * d_ngs_type_A[i] and
+            d_ngs_type_A[i] < psi * d_ngs_type_B[i] and
+            d_ngs_type_Ac[i] + d_ngs_type_Bc[i] > kappa
+        ) {
+            d_cell_type[i] = 2;
+            return;
+        }
+    }
 
-    if (d_cell_type[i] == 0 or d_X[i].y == r_max*10) return; // if cell is dead, don't divide
+    d_X[i].z -= r_max * 10; // when cells die, pop them out by 10 times the maximum interaction distance
+    //printf("Cell index: %d, Cell type: %d, Position: %f\n", i, d_cell_type[i], d_X[i].z);
+    d_cell_type[i] = 0; // set cell type to 0 which means dead
 
-    // add cells at random positions to staging area
-    float rnd = curand_uniform(&d_state[i]);
-    if (rnd < (c_div * dt)) {
-        int n = atomicAdd(d_n_cells, 1);
-        auto r = r_max * pow(rnd, 1. / 2);
-        float PHI = rnd * 2 * M_PI;
-        d_X[n].x = r * sin(PHI);
-        d_X[n].y = r * cos(PHI);
-        d_X[n].z = 0;
-
-        d_old_v[n] = d_old_v[i];
-        d_mechanical_strain[n] = 0.0;
-        d_cell_type[n] = -1; // child cells are always the same type as parents
-    }    
-
-    // // conditions on iri for division
-    // if (d_cell_type[i] == 1 and d_ngs_type_A[i] < alpha * d_ngs_type_B[i]) return; // short range condition 1
-    // if (d_cell_type[i] == 1 and d_ngs_type_B[i] < beta * d_ngs_type_A[i]) return; // short range condition 2
-    // if (d_cell_type[i] == 1 and d_ngs_type_Ac[i] + d_ngs_type_Bc[i] > eta) return; // overcrowding condition
-    
-    // // conditions on xan for division
-    // if (d_cell_type[i] == 2 and d_ngs_type_B[i] < phi * d_ngs_type_A[i]) return; // short range condition 1
-    // if (d_cell_type[i] == 2 and d_ngs_type_A[i] < psi * d_ngs_type_B[i]) return; // short range condition 2
-    // if (d_cell_type[i] == 2 and d_ngs_type_Ac[i] + d_ngs_type_Bc[i] > kappa) return; // overcrowding condition
 }
 
 // __global__ void incrementCells(int* d_n_cells) {
@@ -246,7 +246,7 @@ __global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X, fl
 
     // auto R_MAX = pow(n_cells / 0.9069, 1. / 2) * init_dist / 2;
     auto R_MAX = pow(100 / 0.9069, 1. / 2) * init_dist / 2;
-    if (i < n_new_cells) {
+    if (i < n_new_cells*2) {
         int n = atomicAdd(d_n_cells, 1);
         auto r = R_MAX * pow(curand_uniform(&d_state[i]), 1. / 2);
         float PHI = curand_uniform(&d_state[i]) * 2 * M_PI;
@@ -255,7 +255,10 @@ __global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X, fl
         d_X[n].z = 0;
 
         d_old_v[n] = d_old_v[i];
-        d_cell_type[n] = -1; 
+        // d_cell_type[n] = -1; 
+        if (i < n_new_cells) d_cell_type[n] = -1; // assign cell type -1 or -2 randomly for staging type 1 or type 2 respectively
+        else d_cell_type[n] = -2;
+        // d_cell_type[n] = int(curand_uniform(&d_state[i])) - 2;
     }
 }
 
@@ -331,7 +334,11 @@ int main(int argc, char const* argv[])
     Property<int> cell_type{n_max, "cell_type"};
     cudaMemcpyToSymbol(d_cell_type, &cell_type.d_prop, sizeof(d_cell_type));
     for (int i =0; i < n_0; i++) {
-        cell_type.h_prop[i] = std::rand() % 2 + 1; // assign each cell randomly the label 1 or 2
+        // cell_type.h_prop[i] = std::rand() % 2 + 1; // assign each cell randomly the label 1 or 2
+        if (i < 50) cell_type.h_prop[i] = 1;
+        if (i >= 50 and i < 100) cell_type.h_prop[i] = 2;
+        if (i >= 100 and i < 400) cell_type.h_prop[i] = -1;
+        if (i >= 400 and i < 700) cell_type.h_prop[i] = -2;
     }
     /**/
 
@@ -414,12 +421,31 @@ int main(int argc, char const* argv[])
 
     cells.take_step<pairwise_force>(0.0, generic_function);
 
+    // export the initial conditions
+    cells.copy_to_host();
+    mechanical_strain.copy_to_host();
+    cell_type.copy_to_host();
+    ngs_type_A.copy_to_host();
+    ngs_type_B.copy_to_host();
+    ngs_type_Ac.copy_to_host();
+    ngs_type_Bc.copy_to_host();
+    ngs_type_Ad.copy_to_host();
+    ngs_type_Bd.copy_to_host();
+
+    output.write_positions(cells);
+    output.write_property(mechanical_strain);
+    output.write_property(cell_type);
+    output.write_property(ngs_type_A);
+    output.write_property(ngs_type_B);
+    output.write_property(ngs_type_Ad);
+    output.write_property(ngs_type_Bd);
+
     // Main simulation loop
     for (int time_step = 0; time_step <= cont_time; time_step ++) {
         for (float T = 0.0; T < 1.0; T+=dt) {
             //generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
             stage_new_cells<<<(cells.get_d_n() + 128 -1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n, n_new_cells);
-            // proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
+            //proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
             cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);
             // death<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate death
         }
