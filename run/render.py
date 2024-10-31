@@ -2,6 +2,8 @@ from vedo import *
 import imageio
 import os
 import sys
+import matplotlib.pyplot as plt
+import pandas as pd
 
 def load_vtks(folder_path):
     
@@ -15,7 +17,7 @@ def load_vtks(folder_path):
 
     frames = []
     for vtk in vtks:
-        print(vtk)
+        # print(vtk)
         # Construct the full file path
         file_path = os.path.join(folder_path, vtk)
 
@@ -31,12 +33,13 @@ def render_movie(folder_path, export):
     cmap = "Set1" # the colour map
     c_prop = "cell_type" # which property of cells do you want to colour
 
+
     # Create a plotter
     plt = Plotter(interactive=0)
     plt.show(zoom="tight")
 
     if export == "-e":
-        v = Video(name=f"{folder_path.split('/')[-1]}.mp4", duration=10, backend="imageio")
+        v = Video(name=f"{folder_path.split('/')[-1]}.mp4", duration=video_length, backend="imageio")
 
     # Load frames
     vtks = load_vtks(folder_path)
@@ -45,7 +48,11 @@ def render_movie(folder_path, export):
     for vtk in vtks:
 
         points = Points(vtk).point_size(10)
-        points.cmap("Set1","cell_type")
+        points.cmap(cmap, c_prop)
+        # points.rotate_x(-45).rotate_y(-45)
+        # points.lighting("plastic")
+        # p1 = Point([2,2,2], c="white")
+        # l1 = Light(p1, c="white")
         #trace.c(trace.pointdata["cell_type"])
         #print(trace)
         # print(trace.pointdata["cell_type"])
@@ -71,8 +78,73 @@ def render_movie(folder_path, export):
 def show_chem_grad(folder_path):
     pts = load_vtks(folder_path)
 
-    u = pts.pointdata["u"]
-    print(u)
+    n_t = 10
+
+    print(pts[0])
+    print(pts[0].pointdata["cell_type"])
+    print(pts[0].vertices)
+    print(pts[0].pointdata["u"])
+    x_pos = pts[0].vertices[:, 0]
+
+    u = pts[0].pointdata["u"]
+    v = pts[0].pointdata["v"]
+    attributes = [u,v]
+
+
+    fig, axs = plt.subplots(n_t,2, figsize=(10,2*n_t))
+
+    for i, row in enumerate(axs):
+        t = int(i* len(pts)/n_t)
+        u = pts[t].pointdata["u"]
+        v = pts[t].pointdata["v"]
+        attributes = [u,v]
+        for j, ax in enumerate(row):
+            ax.scatter(x_pos, attributes[j])
+            ax.set_title(f"t = {t}")
+            ax.set_xlabel("x_pos")
+            if j == 0:
+                ax.set_ylabel("u")
+            if j == 1:
+                ax.set_ylabel("v")
+
+    plt.tight_layout()
+    plt.show()
+
+def tissue_stats(folder_path):
+    pts = load_vtks(folder_path)
+
+    stats = []
+    for pt in pts:
+        #print(pt.vertices[:10])
+        xmax = max(pt.vertices[:, 0])
+        ymax = max(pt.vertices[:, 1])
+        xmin = min(pt.vertices[:, 0])
+        ymin = min(pt.vertices[:, 1])
+
+        n_A = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 1])
+        n_B = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 2])
+        n_dead = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 0])
+        n_staging1 = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == -1]) 
+        n_staging2 = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == -2])
+
+        stats.append({
+            'xmax': xmax,
+            'ymax': ymax,
+            'xmin': xmin,
+            'ymin': ymin,
+            'n_A': n_A,
+            'n_B': n_B,
+            'n_dead': n_dead,
+            "n_staging1": n_staging1,
+            "n_staging2": n_staging2
+        })
+    
+    stats_df = pd.DataFrame(stats)
+    print(stats_df)
+
+
+
+    
 
 if __name__ == "__main__":
     # collect bash arguments
@@ -84,7 +156,8 @@ if __name__ == "__main__":
 
     folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
 
-    #render_movie(folder_path, export)
-    show_chem_grad(folder_path)
+    tissue_stats(folder_path)
+    render_movie(folder_path, export)
+    #show_chem_grad(folder_path)
 
 
