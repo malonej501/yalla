@@ -15,28 +15,32 @@
 // N.B. distances are in millimeters so 0.001 = 1 micrometer
 
 // global simulation parameters
-const float r_max = 0.2;                        // Max distance betwen two cells for which they will interact - set to upper bound of donut
+const float r_max = 0.1;                        // Max distance betwen two cells for which they will interact - set to upper bound of donut
 const int n_max = 200000;                       // Max number of cells
-const float A_div = 0.002;                     // 0.02 works well if you have the overcrowding condition
-const float B_div = 0.00002;                   
+const float A_div = 0.01;                     // 0.02 works well if you have the overcrowding condition
+const float B_div = 0.002;                   
 const float r_A_birth = 0.1;               //chance of iridophore birth from background cell
 const float noise = 0;//0.5;                        // Magnitude of noise returned by generate_noise
-const int cont_time = 1000;                    // Simulation duration in arbitrary time units 1 = 1 day
+const int cont_time = 10000;                    // Simulation duration in arbitrary time units 1 = 1 day
 const float dt = 0.1;                           // Time step for Euler integration
 const int no_frames = 100;                      // no. frames of simulation output to vtk - divide the simulation time by this number
 
 // tissue initialisation
-const float init_dist = 0.1;//0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
-const float div_dist = 0.08;
+const float init_dist = 0.05;//0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
+const float div_dist = 0.01;
 const int n_0 = 500;//450;//500;//350;                            // Initial number of cells n.b. this number needs to divide properly between stripes if using volk initial condition
 
 // cell migration parameters
 const bool diff_adh_rep = true;                // set to false to turn off differential adhesion and repulsion
-const float rii = 0.02;                         // Length scales for migration forces for iri-iri (in mm)
-const float Rii = 0.00124;                      // Repulsion from iri to iri (mm^2/day)
-const float aii = 0.012;
-const float Aii = 0.001956;
+// const float rii = 0.02;                         // Length scales for migration forces for iri-iri (in mm)
+// const float Rii = 0.00124;                      // Repulsion from iri to iri (mm^2/day)
+// const float aii = 0.012;
+// const float Aii = 0.001956;
 
+const float rii = 0.01;                         // Length scales for migration forces for iri-iri (in mm)
+const float Rii = 0.002;                      // Repulsion from iri to iri (mm^2/day)
+const float aii = 0.011;
+const float Aii = 0.0019;
 
 // iridophore birth parameters
 const float iriRand = 0.00003;                     // chance of random melanophore birth when no cells in omegaRand
@@ -156,14 +160,16 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X, fl
 
     d_mechanical_strain[n] = 0.0;
 
-    //if (d_cell_type[i] == 1) d_cell_type[n] = 1; // irid always produce irid
+     // irid always produce irid
     
-    // if ((d_cell_type[i] == 2) and (curand_uniform(&d_state[i]) < r_A_birth)) d_cell_type[n] = 1; // sometimes background produce irid
-    // else (d_cell_type[n] == 2);
+    if ((d_cell_type[i] == 2) and (curand_uniform(&d_state[i]) < r_A_birth)) d_cell_type[n] = 1; // sometimes background produce irid
+    else d_cell_type[n] = 2;
+
+    if (d_cell_type[i] == 1) d_cell_type[n] = 1;
     // if (d_cell_type[i] == 1) d_cell_type[n] = 1;
     // d_cell_type[n] = rnd % 2 + 1; // child cell type is uniformly random
     //d_cell_type[n] = d_cell_type[i]; // child cells are always the same type as parents
-    d_cell_type[n] = d_cell_type[i];    
+    // d_cell_type[n] = d_cell_type[i];    
 }
 
 
@@ -199,7 +205,7 @@ int main(int argc, char const* argv[])
     cudaMemcpyToSymbol(d_cell_type, &cell_type.d_prop, sizeof(d_cell_type));
 
     for (int i =0; i < n_0; i++) {
-        if (std::rand() % 100 < 10) cell_type.h_prop[i] = 1; //randomly assign a proportion of initial cells with each type
+        if (std::rand() % 100 < 1) cell_type.h_prop[i] = 1; //randomly assign a proportion of initial cells with each type
         else cell_type.h_prop[i] = 2;
     }
 
@@ -275,7 +281,7 @@ int main(int argc, char const* argv[])
     for (int time_step = 0; time_step <= cont_time; time_step ++) {
         for (float T = 0.0; T < 1.0; T+=dt) {
             generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
-            //proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
+            proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
             cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);
         }
 
