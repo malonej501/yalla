@@ -17,11 +17,11 @@
 // global simulation parameters
 const float r_max = 0.1;                        // Max distance betwen two cells for which they will interact - set to upper bound of donut
 const int n_max = 200000;                       // Max number of cells
-const float A_div = 0.01;                     // 0.02 works well if you have the overcrowding condition
-const float B_div = 0.002;                   
-const float r_A_birth = 0.1;               //chance of iridophore birth from background cell
+const float A_div = 0.009;                     // 0.02 works well if you have the overcrowding condition
+const float B_div = 0.009;                   
+const float r_A_birth = 0.01;               //chance of iridophore birth from background cell
 const float noise = 0;//0.5;                        // Magnitude of noise returned by generate_noise
-const int cont_time = 10000;                    // Simulation duration in arbitrary time units 1 = 1 day
+const int cont_time = 1000;                    // Simulation duration in arbitrary time units 1 = 1 day
 const float dt = 0.1;                           // Time step for Euler integration
 const int no_frames = 100;                      // no. frames of simulation output to vtk - divide the simulation time by this number
 
@@ -29,6 +29,7 @@ const int no_frames = 100;                      // no. frames of simulation outp
 const float init_dist = 0.05;//0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
 const float div_dist = 0.01;
 const int n_0 = 500;//450;//500;//350;                            // Initial number of cells n.b. this number needs to divide properly between stripes if using volk initial condition
+const float A_init = 1.0;                       // % of the initial cell population that will be type 1 / A
 
 // cell migration parameters
 const bool diff_adh_rep = true;                // set to false to turn off differential adhesion and repulsion
@@ -37,9 +38,14 @@ const bool diff_adh_rep = true;                // set to false to turn off diffe
 // const float aii = 0.012;
 // const float Aii = 0.001956;
 
-const float rii = 0.01;                         // Length scales for migration forces for iri-iri (in mm)
-const float Rii = 0.002;                      // Repulsion from iri to iri (mm^2/day)
-const float aii = 0.011;
+// const float rii = 0.01;                         // Length scales for migration forces for iri-iri (in mm)
+// const float Rii = 0.002;                      // Repulsion from iri to iri (mm^2/day)
+// const float aii = 0.011;
+// const float Aii = 0.0019;
+
+const float rii = 0.012;                         // Length scales for migration forces for iri-iri (in mm)
+const float Rii = 0.0045;                      // Repulsion from iri to iri (mm^2/day)
+const float aii = 0.019;
 const float Aii = 0.0019;
 
 // iridophore birth parameters
@@ -53,11 +59,11 @@ const float kappa = 10;                         // cap on max number of xanthoph
 // Macro that builds the cell variable type - instead of type float3 we are making a instance of Cell with attributes x,y,z,u,v where u and v are diffusible chemicals
 //MAKE_PT(Cell); // float3 i .x .y .z .u .v .whatever
 // to use MAKE_PT(Cell) replace every instance of float3 with Cell
-// MAKE_PT(Cell);
+MAKE_PT(Cell, u, v);
 
 __device__ float* d_mechanical_strain; // define global variable for mechanical strain on the GPU (device)
 __device__ int* d_cell_type; // global variable for cell type on the GPU - iridophore=1, xanthophore=2, DEAD=0
-__device__ float3* d_W; // global variable for random number from Weiner process for stochasticity
+__device__ Cell* d_W; // global variable for random number from Weiner process for stochasticity
 __device__ int* d_ngs_type_A; // no. iri cells in neighbourhood
 __device__ int* d_ngs_type_B; // no. xan cells in neighbourhood
 
@@ -69,8 +75,25 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // This will be only useful in simulations with a wall and a ghost node
     if (i == j){
         dF += d_W[i]; // add stochasticity from the weiner process to the attributes of the cells
+
+                // each cell type has a base line production rate of chemical u or v depending on cell type
+        float k_prod = 0.3;
+        dF.u += k_prod * (d_cell_type[i] == 1); // cell type 1 produces chemical u
+        dF.v += k_prod * (d_cell_type[i] == 2); // cell type 2 produces chemical v
+        
+        // add degredation not dependent on anything
+        float k_deg = 0.03;
+        dF.u -= k_deg * (Xi.u);
+        dF.v -= k_deg * (Xi.v);
+
         return dF;
     }
+    
+    // define constants for rate of diffusion
+    float D_u = 0.1;
+    float D_v = 0.01;
+    dF.u = -D_u * r.u; // r.u is the difference in chemical concentration between cells in pair
+    dF.v = -D_v * r.v;
 
 
     if (dist < 0.075) { // the radius of the inner disc
@@ -127,21 +150,25 @@ __global__ void generate_noise(int n, curandState* d_state) { // Weiner process 
     d_W[i].y = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
     //d_W[i].z = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
     d_W[i].z = 0;
+    d_W[i].u = 0;
+    d_W[i].v = 0;
 }
 
-__global__ void proliferation(int n_cells, curandState* d_state, float3* d_X, float3* d_old_v, int* d_n_cells) {
+__global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, float3* d_old_v, int* d_n_cells) {
     int i = blockIdx.x * blockDim.x + threadIdx.x; // get the index of the current cell
     if (i >= n_cells) return; // return nothing if the index is greater than n_cells
     if (n_cells >= (n_max * 0.9)) return;  // return nothing if the no. cells starts to approach the max
 
     if (d_cell_type[i] == 1) {
         // if (d_ngs_type_A[i] + d_ngs_type_B[i] > eta) return;
+        if (d_ngs_type_A[i] > 5) return;
         if (curand_uniform(&d_state[i]) > (A_div * dt)) return;
     }
 
     if (d_cell_type[i] == 2) {
         //if (d_ngs_type_A[i] + d_ngs_type_B[i] < eta) return;
         // if (d_ngs_type_A[i] + d_ngs_type_B[i] > eta) return;
+        if (d_ngs_type_A[i] + d_ngs_type_B[i] > 5) return;
         if (curand_uniform(&d_state[i]) > (B_div * dt)) return;
     }
     
@@ -186,7 +213,7 @@ int main(int argc, char const* argv[])
 
     /* create host variables*/
     // Wiener process
-    Property<float3> W{n_max, "wiener_process"}; // define a property for the weiner process
+    Property<Cell> W{n_max, "wiener_process"}; // define a property for the weiner process
     cudaMemcpyToSymbol(d_W, &W.d_prop, sizeof(d_W)); // connect the global property defined on the GPU to the property defined in this function
 
     // Mechanical strain
@@ -205,7 +232,7 @@ int main(int argc, char const* argv[])
     cudaMemcpyToSymbol(d_cell_type, &cell_type.d_prop, sizeof(d_cell_type));
 
     for (int i =0; i < n_0; i++) {
-        if (std::rand() % 100 < 1) cell_type.h_prop[i] = 1; //randomly assign a proportion of initial cells with each type
+        if (std::rand() % 100 < A_init) cell_type.h_prop[i] = 1; //randomly assign a proportion of initial cells with each type
         else cell_type.h_prop[i] = 2;
     }
 
@@ -218,28 +245,31 @@ int main(int argc, char const* argv[])
 
     // Initial conditions
     
-    Solution<float3, Gabriel_solver> cells{n_max, 50, r_max};
-    // Solution<float3, Grid_solver> cells{n_max, 50, r_max}; //originally using r_max*5
+    Solution<Cell, Gabriel_solver> cells{n_max, 50, r_max};
+    // Solution<Cell, Grid_solver> cells{n_max, 50, r_max}; //originally using r_max*5
     *cells.h_n = n_0;
     //random_sphere(0.7, cells);
     random_disk_z(init_dist, cells);
     // regular_rectangle(init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells); //initialise square with nx=n_0/2 center will be at (y,x) = (1,1)
 
-
+      // initialise chemical amounts with 0
+    for (int i = 0; i < n_0; i++) {
+        cells.h_X[i].u = 0; //h_X is host cell
+        cells.h_X[i].v = 0;
+    }
     
-    // Initialise properties with zeroes
+    // Initialise properties and k with zeroes
     for (int i = 0; i < n_max; i++) { //initialise with zeroes, for loop step size is set to 1 with i++
         mechanical_strain.h_prop[i] = 0;
         ngs_type_A.h_prop[i] = 0;
         ngs_type_B.h_prop[i] = 0;
     }
 
-    auto generic_function = [&](const int n, const float3* __restrict__ d_X, float3* d_dX) { // then set the mechanical forces to zero on the device
+    auto generic_function = [&](const int n, const Cell* __restrict__ d_X, Cell* d_dX) { // then set the mechanical forces to zero on the device
         // Set these properties to zero after every timestep so they don't accumulate
         thrust::fill(thrust::device, mechanical_strain.d_prop, mechanical_strain.d_prop + cells.get_d_n(), 0.0);
         thrust::fill(thrust::device, ngs_type_A.d_prop, ngs_type_A.d_prop + cells.get_d_n(), 0);
 	    thrust::fill(thrust::device, ngs_type_B.d_prop, ngs_type_B.d_prop + cells.get_d_n(), 0);
-
     };
 
     cells.copy_to_device();
