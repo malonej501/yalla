@@ -17,11 +17,11 @@
 // global simulation parameters
 const float r_max = 0.1;                        // Max distance betwen two cells for which they will interact - set to upper bound of donut
 const int n_max = 200000;                       // Max number of cells
-const float A_div = 0.009;                     // 0.02 works well if you have the overcrowding condition
+const float A_div = 0.012;                     // 0.02 works well if you have the overcrowding condition
 const float B_div = 0.009;                   
-const float r_A_birth = 0.01;               //chance of iridophore birth from background cell
+const float r_A_birth = 0.08;               //chance of iridophore birth from background cell
 const float noise = 0;//0.5;                        // Magnitude of noise returned by generate_noise
-const int cont_time = 1000;                    // Simulation duration in arbitrary time units 1 = 1 day
+const int cont_time = 10000;                    // Simulation duration in arbitrary time units 1 = 1 day
 const float dt = 0.1;                           // Time step for Euler integration
 const int no_frames = 100;                      // no. frames of simulation output to vtk - divide the simulation time by this number
 
@@ -29,7 +29,7 @@ const int no_frames = 100;                      // no. frames of simulation outp
 const float init_dist = 0.05;//0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
 const float div_dist = 0.01;
 const int n_0 = 500;//450;//500;//350;                            // Initial number of cells n.b. this number needs to divide properly between stripes if using volk initial condition
-const float A_init = 1.0;                       // % of the initial cell population that will be type 1 / A
+const float A_init = 0;                       // % of the initial cell population that will be type 1 / A
 
 // cell migration parameters
 const bool diff_adh_rep = true;                // set to false to turn off differential adhesion and repulsion
@@ -51,7 +51,11 @@ const float Aii = 0.0019;
 // iridophore birth parameters
 const float iriRand = 0.00003;                     // chance of random melanophore birth when no cells in omegaRand
 const float eta = 6;                            // cap on max number of iridophores that can be in omegaLoc before it becomes too overcrowed for cell birth
+const float AB_div = 0.001;                      // B cells will not change to A if the amount of u exceeds this value
 
+// chemical diffusion rates - this is Fick's first law?
+const float D_u = 0.2;
+const float D_v = 0.01;
 
 const float kappa = 10;                         // cap on max number of xanthophores that can be in omegaLoc before overcrowding
 
@@ -72,15 +76,22 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 {
     Pt dF{0};
 
+    //if (dist > r_max) return dF; // Gabriel solver doesn't account for distance when computing neighbourhood, we need to exclude distant pairs
+    if (dist > r_max) return dF; // set cutoff for computing forces
+
+
     // This will be only useful in simulations with a wall and a ghost node
     if (i == j){
         dF += d_W[i]; // add stochasticity from the weiner process to the attributes of the cells
 
-                // each cell type has a base line production rate of chemical u or v depending on cell type
+        // each cell type has a base line production rate of chemical u or v depending on cell type
         float k_prod = 0.3;
         dF.u += k_prod * (d_cell_type[i] == 1); // cell type 1 produces chemical u
         dF.v += k_prod * (d_cell_type[i] == 2); // cell type 2 produces chemical v
-        
+        // dF.u = k_prod * (1.0 - Xi.u) * (d_cell_type[i] ==1);
+        // dF.v = k_prod * (1.0 - Xi.u) * (d_cell_type[i] ==2);
+
+
         // add degredation not dependent on anything
         float k_deg = 0.03;
         dF.u -= k_deg * (Xi.u);
@@ -89,9 +100,6 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         return dF;
     }
     
-    // define constants for rate of diffusion
-    float D_u = 0.1;
-    float D_v = 0.01;
     dF.u = -D_u * r.u; // r.u is the difference in chemical concentration between cells in pair
     dF.v = -D_v * r.v;
 
@@ -102,8 +110,6 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         else d_ngs_type_B[i] += 1;
     }
 
-    //if (dist > r_max) return dF; // Gabriel solver doesn't account for distance when computing neighbourhood, we need to exclude distant pairs
-    if (dist > r_max) return dF; // set cutoff for computing forces
 
 
     // we define the default strength of adhesion and repulsion
@@ -187,12 +193,24 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
 
     d_mechanical_strain[n] = 0.0;
 
+    // half the amount of each chemical upon cell division in the parent cell
+    d_X[i].u *= 0.5;
+    d_X[i].v *= 0.5;
+    // the child inherits the other half of the amount of the chemical
+    d_X[n].u = d_X[i].u;
+    d_X[n].v = d_X[i].v;
+
      // irid always produce irid
     
-    if ((d_cell_type[i] == 2) and (curand_uniform(&d_state[i]) < r_A_birth)) d_cell_type[n] = 1; // sometimes background produce irid
-    else d_cell_type[n] = 2;
-
-    if (d_cell_type[i] == 1) d_cell_type[n] = 1;
+    if (d_cell_type[i] == 2) {
+        if (curand_uniform(&d_state[i]) < r_A_birth and d_X[i].u < AB_div) { // random iridophore birth is inhibited by chemical u
+                d_cell_type[n] = 1; // sometimes background produce irid
+            }
+        else d_cell_type[n] = 2;
+    } else if (d_cell_type[i] == 1) {
+        d_cell_type[n] = 1;
+    }
+    
     // if (d_cell_type[i] == 1) d_cell_type[n] = 1;
     // d_cell_type[n] = rnd % 2 + 1; // child cell type is uniformly random
     //d_cell_type[n] = d_cell_type[i]; // child cells are always the same type as parents
@@ -327,6 +345,8 @@ int main(int argc, char const* argv[])
             output.write_property(cell_type);
             output.write_property(ngs_type_A);
             output.write_property(ngs_type_B);
+            output.write_field(cells, "u", &Cell::u); //write the u part of each cell to vtk
+            output.write_field(cells, "v", &Cell::v);
         }
     }
     return 0;
