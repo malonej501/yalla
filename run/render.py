@@ -27,28 +27,31 @@ def load_vtks(folder_path):
 
     return frames
 
-def render_movie(folder_path, export):
+def render_movie(c_prop, folder_path, export):
+
+    """Choose cell property to colourise - e.g. cell_type, u, mechanical_strain"""
     
     video_length = 10 # in seconds
-    cmap = "Set1" # the colour map
-    c_prop = "cell_type" # which property of cells do you want to colour
-
+    # cmap = "Set1" # the colour map
+    #c_prop = "cell_type" # which property of cells do you want to colour
+    cmap = "viridis"
+    # c_prop = "u"
 
     # Create a plotter
     plt = Plotter(interactive=0)
     plt.show(zoom="tight")
 
-    if export == "-e":
-        v = Video(name=f"{folder_path.split('/')[-1]}.mp4", duration=video_length, backend="imageio")
-
+    if export:
+        v = Video(name=f"{folder_path.split('/')[-1]}_{c_prop}.mp4", duration=video_length, backend="imageio")
     # Load frames
     vtks = load_vtks(folder_path)
 
     # Loop through the VTK files and visualize them
     for vtk in vtks:
 
-        points = Points(vtk).point_size(10)
+        points = Points(vtk).point_size(7) #originally 10
         points.cmap(cmap, c_prop)
+        points.add_scalarbar(title=c_prop)
         # points.rotate_x(-45).rotate_y(-45)
         # points.lighting("plastic")
         # p1 = Point([2,2,2], c="white")
@@ -62,15 +65,17 @@ def render_movie(folder_path, export):
         # Add the mesh to the plotter
         plt.remove("cells").add(points)
 
+        # points
+
         plt.render().reset_camera()
-        if export == "-e":
+        if export:
             v.add_frame()
 
         #plt.clear()
         #plt.remove().render()
         #time.sleep(1)
 
-    if export == "-e":
+    if export:
         v.close()
     plt.interactive().close()
     plt.clear()
@@ -142,6 +147,17 @@ def tissue_stats(folder_path):
     stats_df = pd.DataFrame(stats)
     print(stats_df)
 
+def print_help():
+    help_message = """
+    Usage: python3 render.py [options]
+    
+    Options:
+        -h              Show this help message and exit.
+        -e              Export the rendering to video file.
+        -c c_prop       Specify which cell property to colourise.
+        """
+    
+    print(help_message)
 
 
     
@@ -149,15 +165,23 @@ def tissue_stats(folder_path):
 if __name__ == "__main__":
     # collect bash arguments
     args = sys.argv[1:]
-    output_folder = args[0]
-    export = False
-    if len(args) == 2:
-        export = args[1]
+    if "-h" in args:
+        print_help()
+    else:
+        output_folder = args[0]
+        export = False
+        if "-e" in args:
+            export = True
+        if "-c" in args:
+            c_prop_idx = args.index("-c") + 1 # identify the index of the c_prop argument - comes after -c flag
+            c_prop = str(args[c_prop_idx])
+        else:
+            c_prop = "cell_type"
 
-    folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
+        folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
 
-    tissue_stats(folder_path)
-    render_movie(folder_path, export)
-    #show_chem_grad(folder_path)
+        tissue_stats(folder_path)
+        render_movie(c_prop, folder_path, export)
+        #show_chem_grad(folder_path)
 
 
