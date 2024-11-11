@@ -52,6 +52,7 @@ const float r_A_birth = 0.08;                   //chance of iridophore birth fro
 const int Acrowd = 5;                           // max no. A cells in the local disc of A cells before proliferation stops
 const int Bcrowd = 5;                           // max no. B cells in the local disc of B cells before proliferation stops
 const float uthresh = 0.015;                      // B cells will not change to A if the amount of u exceeds this value
+const float mech_thresh = 0.05;                 // if the mechanical strain on a cell exceeds this value, don't divide
 
 // chemical diffusion rates - this is Fick's first law?
 const float D_u = 1.0;
@@ -138,6 +139,9 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     dF.y -= r.y * F / dist;
     dF.z -= 0;  
 
+    // cell switching
+    if (Xi.v > 0.55) d_cell_type[i] = 2;
+
 
     return dF;
 }
@@ -151,7 +155,6 @@ __global__ void generate_noise(int n, curandState* d_state) { // Weiner process 
     // return noise for every attribute of the cell in this case x,y,z
     d_W[i].x = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
     d_W[i].y = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
-    //d_W[i].z = curand_normal(&d_state[i]) * powf(dt, 0.5) * D / dt;
     d_W[i].z = 0;
     d_W[i].u = 0;
     d_W[i].v = 0;
@@ -164,7 +167,8 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
 
     if (d_cell_type[i] == 1) {
         // if (d_ngs_type_A[i] + d_ngs_type_B[i] > eta) return;
-        if (d_ngs_type_A[i] > Acrowd) return;
+        // if (d_ngs_type_A[i] > Acrowd) return;
+        if (d_mechanical_strain[i] > mech_thresh) return;
         if (curand_uniform(&d_state[i]) > (A_div * dt)) return;
     }
 
@@ -172,19 +176,19 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
         //if (d_ngs_type_A[i] + d_ngs_type_B[i] < eta) return;
         // if (d_ngs_type_A[i] + d_ngs_type_B[i] > eta) return;
         //if (d_ngs_type_A[i] + d_ngs_type_B[i] > ABcrowd) return;
-        if (d_ngs_type_B[i] > Bcrowd) return;
+        // if (d_ngs_type_B[i] > Bcrowd) return;
+        if (d_mechanical_strain[i] > mech_thresh) return;
         if (curand_uniform(&d_state[i]) > (B_div * dt)) return;
     }
     
 
     int n = atomicAdd(d_n_cells, 1);
+    
+    // new cell added to parent at random angle and fixed distance - this method only works for 2D
+    float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
 
-    // new cell added next to parent at random angle
-    float theta = acosf(2. * curand_uniform(&d_state[i]) - 1);
-    float phi = curand_uniform(&d_state[i]) * 2 * M_PI;
-
-    d_X[n].x = d_X[i].x + div_dist / 2 * sinf(theta) * cosf(phi);
-    d_X[n].y = d_X[i].y + div_dist / 2 * sinf(theta) * sinf(phi);
+    d_X[n].x = d_X[i].x + (div_dist * cosf(theta));
+    d_X[n].y = d_X[i].y + (div_dist * sinf(theta));
     d_X[n].z = 0;
 
     d_old_v[n] = d_old_v[i];
@@ -212,7 +216,6 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     d_X[n].v = d_X[i].v;
  
 }
-
 
 int main(int argc, char const* argv[])
 {
@@ -247,7 +250,8 @@ int main(int argc, char const* argv[])
     std::cout << "r_A_birth = " << r_A_birth << "\n";
     std::cout << "Acrowd = " << Acrowd << "\n";
     std::cout << "Bcrowd = " << Bcrowd << "\n";
-    std::cout << "uthresh = " << uthresh << "\n\n";
+    std::cout << "uthresh = " << uthresh << "\n";
+    std::cout << "mech_thresh = " << mech_thresh << "\n\n";
 
     std::cout << "Chemical Diffusion Rates:\n";
     std::cout << "D_u = " << D_u << "\n";
