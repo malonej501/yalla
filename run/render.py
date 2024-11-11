@@ -16,6 +16,7 @@ def load_vtks(folder_path):
     vtks = sorted(vtks, key=lambda x: int(x.split('_')[1].split('.')[0]))
 
     frames = []
+
     for vtk in vtks:
         # print(vtk)
         # Construct the full file path
@@ -42,16 +43,26 @@ def render_movie(c_prop, folder_path, export):
     plt.show(zoom="tight")
 
     if export:
-        v = Video(name=f"{folder_path.split('/')[-1]}_{c_prop}.mp4", duration=video_length, backend="imageio")
+        v = Video(
+            name=f"{folder_path.split('/')[-1]}_{c_prop}.mp4", 
+            duration=video_length, 
+            backend="imageio")
     # Load frames
     vtks = load_vtks(folder_path)
 
     # Loop through the VTK files and visualize them
-    for vtk in vtks:
+    for i, vtk in enumerate(vtks):
 
         points = Points(vtk).point_size(7) #originally 10
+
         points.cmap(cmap, c_prop)
         points.add_scalarbar(title=c_prop)
+        info = Text2D(
+            txt=(f"i: {i}\n"
+            f"n: {len(points.vertices)}\n"
+            f"n_1: {len(points.pointdata["cell_type"][points.pointdata["cell_type"] == 1])}\n"
+            f"n_2: {len(points.pointdata["cell_type"][points.pointdata["cell_type"] == 2])}\n"),
+            pos="bottom-left")
         # points.rotate_x(-45).rotate_y(-45)
         # points.lighting("plastic")
         # p1 = Point([2,2,2], c="white")
@@ -62,8 +73,12 @@ def render_movie(c_prop, folder_path, export):
         # exit()
 
         points.name = "cells"
+        info.name = "info"
         # Add the mesh to the plotter
-        plt.remove("cells").add(points)
+        plt.remove("cells")
+        plt.remove("info")
+        plt.add(points)
+        plt.add(info)
 
         # points
 
@@ -149,7 +164,7 @@ def tissue_stats(folder_path):
 
 def print_help():
     help_message = """
-    Usage: python3 render.py [options]
+    Usage: python3 render.py [vtk_directory] [options]
     
     Options:
         -h              Show this help message and exit.
