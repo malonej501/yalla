@@ -5,32 +5,13 @@ import sys
 import matplotlib.pyplot as plt
 import pandas as pd
 
-def load_vtks(folder_path):
-    
-    print(f"Rendering: {folder_path}")
+zoom = 0.7 # define the how far the camera is out
 
-    # List all VTK files in the folder
-    vtks = [f for f in os.listdir(folder_path) if f.endswith('.vtk')]
-
-    # Sort files if needed
-    vtks = sorted(vtks, key=lambda x: int(x.split('_')[1].split('.')[0]))
-
-    frames = []
-
-    for vtk in vtks:
-        # print(vtk)
-        # Construct the full file path
-        file_path = os.path.join(folder_path, vtk)
-
-        # Read the VTK file
-        frame = load(file_path)
-        frames.append(frame)
-
-    return frames
-
-def render_movie(c_prop, folder_path, export):
+def render_movie(c_prop, folder_path, export, vtks):
 
     """Choose cell property to colourise - e.g. cell_type, u, mechanical_strain"""
+
+    print(f"Rendering: {folder_path}")
     
     video_length = 10 # in seconds
     # cmap = "Set1" # the colour map
@@ -41,14 +22,13 @@ def render_movie(c_prop, folder_path, export):
     # Create a plotter
     plt = Plotter(interactive=0)
     plt.show(zoom="tight")
+    plt.zoom(zoom)
 
     if export:
         v = Video(
             name=f"{folder_path.split('/')[-1]}_{c_prop}.mp4", 
             duration=video_length, 
             backend="imageio")
-    # Load frames
-    vtks = load_vtks(folder_path)
 
     # Loop through the VTK files and visualize them
     for i, vtk in enumerate(vtks):
@@ -81,8 +61,8 @@ def render_movie(c_prop, folder_path, export):
         plt.add(info)
 
         # points
-
-        plt.render().reset_camera()
+       
+        plt.render(resetcam=False)#.reset_camera()
         if export:
             v.add_frame()
 
@@ -130,11 +110,10 @@ def show_chem_grad(folder_path):
     plt.tight_layout()
     plt.show()
 
-def tissue_stats(folder_path):
-    pts = load_vtks(folder_path)
+def tissue_stats(vtks):
 
     stats = []
-    for pt in pts:
+    for pt in vtks:
         #print(pt.vertices[:10])
         xmax = max(pt.vertices[:, 0])
         ymax = max(pt.vertices[:, 1])
@@ -174,7 +153,10 @@ def print_help():
     
     print(help_message)
 
-
+# def sliderfunc(widget, event):
+#     val = widget.value # get the slider current value
+#     widget.title = "i"
+#     for 
     
 
 if __name__ == "__main__":
@@ -195,8 +177,9 @@ if __name__ == "__main__":
 
         folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
 
-        tissue_stats(folder_path)
-        render_movie(c_prop, folder_path, export)
+        vtks = load(f"{folder_path}/*.vtk")
+        tissue_stats(vtks)
+        render_movie(c_prop, folder_path, export, vtks)
         #show_chem_grad(folder_path)
 
 
