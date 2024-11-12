@@ -29,7 +29,8 @@ def render_movie(c_prop, folder_path, export, vtks):
             name=f"{folder_path.split('/')[-1]}_{c_prop}.mp4", 
             duration=video_length, 
             backend="imageio")
-
+    
+    frames = []
     # Loop through the VTK files and visualize them
     for i, vtk in enumerate(vtks):
 
@@ -54,6 +55,7 @@ def render_movie(c_prop, folder_path, export, vtks):
 
         points.name = "cells"
         info.name = "info"
+        frames.append((points,info))
         # Add the mesh to the plotter
         plt.remove("cells")
         plt.remove("info")
@@ -72,6 +74,20 @@ def render_movie(c_prop, folder_path, export, vtks):
 
     if export:
         v.close()
+
+    def sliderfunc(widget, event):
+        val = widget.value # get the slider current value
+
+        plt.remove("cells")
+        plt.remove("info")
+
+        points, info = frames[int(val)]
+
+        plt.add(points)
+        plt.add(info)
+        plt.render()
+    
+    plt.add_slider(sliderfunc, 0, len(frames)-1, pos="top-right")
     plt.interactive().close()
     plt.clear()
 
@@ -153,10 +169,6 @@ def print_help():
     
     print(help_message)
 
-# def sliderfunc(widget, event):
-#     val = widget.value # get the slider current value
-#     widget.title = "i"
-#     for 
     
 
 if __name__ == "__main__":
