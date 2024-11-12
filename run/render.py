@@ -22,7 +22,7 @@ def render_movie(c_prop, folder_path, export, vtks):
     # Create a plotter
     plt = Plotter(interactive=0)
     plt.show(zoom="tight")
-    plt.zoom(zoom)
+    #plt.zoom(zoom)
 
     if export:
         v = Video(
@@ -37,7 +37,8 @@ def render_movie(c_prop, folder_path, export, vtks):
         points = Points(vtk).point_size(7) #originally 10
 
         points.cmap(cmap, c_prop)
-        points.add_scalarbar(title=c_prop)
+        #points.add_scalarbar(title=c_prop)
+        bar = addons.ScalarBar(points, title=c_prop)
         info = Text2D(
             txt=(f"i: {i}\n"
             f"n: {len(points.vertices)}\n"
@@ -54,17 +55,21 @@ def render_movie(c_prop, folder_path, export, vtks):
         # exit()
 
         points.name = "cells"
+        bar.name = "bar"
         info.name = "info"
-        frames.append((points,info))
+        frames.append((points, bar, info))
         # Add the mesh to the plotter
         plt.remove("cells")
+        plt.remove("bar")
         plt.remove("info")
         plt.add(points)
         plt.add(info)
+        plt.add(bar)
 
         # points
        
-        plt.render(resetcam=False)#.reset_camera()
+        # plt.render(resetcam=False)
+        plt.render().reset_camera()
         if export:
             v.add_frame()
 
@@ -75,19 +80,42 @@ def render_movie(c_prop, folder_path, export, vtks):
     if export:
         v.close()
 
-    def sliderfunc(widget, event):
+    def slider1(widget, event):
         val = widget.value # get the slider current value
 
         plt.remove("cells")
+        plt.remove("bar")
         plt.remove("info")
 
-        points, info = frames[int(val)]
+        points, bar, info = frames[int(val)]
 
         plt.add(points)
+        plt.add(bar)
         plt.add(info)
         plt.render()
+
+    def slider2(widget, event):
+        val = int(widget.value)
+        c_prop = points.pointdata.keys()[val]
+
+        plt.remove("bar") # remove the old bar
+
+        points.cmap(cmap, c_prop) # change the cmap of the current view
+        bar = addons.ScalarBar(points, title=c_prop) # create the new bar
+        bar.name = "bar"
+     
+        # change the cmap of all frames
+        for k, (pts, br, info) in enumerate(frames):
+            pts = pts.cmap(cmap, c_prop)
+            br = addons.ScalarBar(pts, title=c_prop)
+            br.name = "bar"
+            frames[k] = (pts, br, info)
     
-    plt.add_slider(sliderfunc, 0, len(frames)-1, pos="top-right")
+        plt.add(bar)
+        plt.render()
+
+    plt.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
+    plt.add_slider(slider2, 0, len(points.pointdata.keys())-1, pos="top-left", value=points.pointdata.keys().index(c_prop))
     plt.interactive().close()
     plt.clear()
 
@@ -138,9 +166,6 @@ def tissue_stats(vtks):
 
         n_A = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 1])
         n_B = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 2])
-        n_dead = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 0])
-        n_staging1 = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == -1]) 
-        n_staging2 = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == -2])
 
         stats.append({
             'xmax': xmax,
@@ -149,9 +174,6 @@ def tissue_stats(vtks):
             'ymin': ymin,
             'n_A': n_A,
             'n_B': n_B,
-            'n_dead': n_dead,
-            "n_staging1": n_staging1,
-            "n_staging2": n_staging2
         })
     
     stats_df = pd.DataFrame(stats)
@@ -185,7 +207,7 @@ if __name__ == "__main__":
             c_prop_idx = args.index("-c") + 1 # identify the index of the c_prop argument - comes after -c flag
             c_prop = str(args[c_prop_idx])
         else:
-            c_prop = "cell_type"
+            c_prop = "u"
 
         folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
 
