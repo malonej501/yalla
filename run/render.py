@@ -14,14 +14,15 @@ def render_movie(c_prop, folder_path, export, vtks):
     print(f"Rendering: {folder_path}")
     
     video_length = 10 # in seconds
-    # cmap = "Set1" # the colour map
-    #c_prop = "cell_type" # which property of cells do you want to colour
     cmap = "viridis"
-    # c_prop = "u"
+    lims = ((-1,6),(-1,6))
+    # lims = ((-10,10),(-10,10))
 
     # Create a plotter
-    plt = Plotter(interactive=0)
-    plt.show(zoom="tight")
+    plt = Plotter(interactive=False)
+    ax = addons.Axes(plt, xrange=(lims[0][0],lims[0][1]), yrange=(lims[1][0],lims[1][1]), zrange=(0,0))
+    ax.name = "ax"
+    plt.show(zoom="tight", axes=ax)
     #plt.zoom(zoom)
 
     if export:
@@ -35,9 +36,9 @@ def render_movie(c_prop, folder_path, export, vtks):
     for i, vtk in enumerate(vtks):
 
         points = Points(vtk).point_size(7) #originally 10
+        # lims = ((points.bounds()[0],points.bounds()[1]),(points.bounds()[2],points.bounds()[3]))
 
         points.cmap(cmap, c_prop)
-        #points.add_scalarbar(title=c_prop)
         bar = addons.ScalarBar(points, title=c_prop)
         info = Text2D(
             txt=(f"i: {i}\n"
@@ -45,14 +46,6 @@ def render_movie(c_prop, folder_path, export, vtks):
             f"n_1: {len(points.pointdata["cell_type"][points.pointdata["cell_type"] == 1])}\n"
             f"n_2: {len(points.pointdata["cell_type"][points.pointdata["cell_type"] == 2])}\n"),
             pos="bottom-left")
-        # points.rotate_x(-45).rotate_y(-45)
-        # points.lighting("plastic")
-        # p1 = Point([2,2,2], c="white")
-        # l1 = Light(p1, c="white")
-        #trace.c(trace.pointdata["cell_type"])
-        #print(trace)
-        # print(trace.pointdata["cell_type"])
-        # exit()
 
         points.name = "cells"
         bar.name = "bar"
@@ -65,17 +58,10 @@ def render_movie(c_prop, folder_path, export, vtks):
         plt.add(points)
         plt.add(info)
         plt.add(bar)
-
-        # points
        
-        # plt.render(resetcam=False)
         plt.render().reset_camera()
         if export:
             v.add_frame()
-
-        #plt.clear()
-        #plt.remove().render()
-        #time.sleep(1)
 
     if export:
         v.close()
@@ -207,7 +193,7 @@ if __name__ == "__main__":
             c_prop_idx = args.index("-c") + 1 # identify the index of the c_prop argument - comes after -c flag
             c_prop = str(args[c_prop_idx])
         else:
-            c_prop = "u"
+            c_prop = "cell_type"
 
         folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
 
