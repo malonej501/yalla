@@ -2,8 +2,14 @@ from vedo import *
 import imageio
 import os
 import sys
+import shapely
+from matplotlib.patches import Polygon
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
+import alphashape
+from sklearn import metrics
+from sklearn.cluster import DBSCAN
 
 zoom = 0.7 # define the how far the camera is out
 
@@ -20,10 +26,10 @@ def render_movie(c_prop, folder_path, export, vtks):
 
     # Create a plotter
     plt = Plotter(interactive=False)
-    ax = addons.Axes(plt, xrange=(lims[0][0],lims[0][1]), yrange=(lims[1][0],lims[1][1]), zrange=(0,0))
-    ax.name = "ax"
-    plt.show(zoom="tight", axes=ax)
-    #plt.zoom(zoom)
+    # ax = addons.Axes(plt, xrange=(lims[0][0],lims[0][1]), yrange=(lims[1][0],lims[1][1]), zrange=(0,0))
+    # ax.name = "ax"
+    plt.show(zoom="tight", axes=13)
+    # plt.zoom(zoom)
 
     if export:
         v = Video(
@@ -165,6 +171,91 @@ def tissue_stats(vtks):
     stats_df = pd.DataFrame(stats)
     print(stats_df)
 
+def pattern_stats(vtks):
+
+    stats = []
+    for i, mesh in enumerate(vtks):
+        mesh = vtks[i]
+        spot_cells = mesh.vertices[mesh.pointdata["cell_type"] == 1] # return positions of spot cells
+        # eps - maximum distance between two samples for one to be considered as in the neighborhood of the other - set to r_max
+        db = DBSCAN(eps=0.1, min_samples=1).fit(spot_cells)
+        labels = db.labels_
+
+        # Number of clusters in labels, ignoring noise if present.
+        unique_labels = set(labels)
+        n_clusters = len(unique_labels) - (1 if -1 in labels else 0)
+        n_noise = list(labels).count(-1) # noisy points are given the label -1
+        #https://scikit-learn.org/1.5/modules/clustering.html#silhouette-coefficient
+        # s_coeff = metrics.silhouette_score(spot_cells, labels) # a higher Silhouette Coefficient score relates to a model with better defined clusters
+        
+        core_samples_mask = np.zeros_like(labels,dtype=bool)
+        core_samples_mask[db.core_sample_indices_] = True
+
+        a_shapes = []
+        a_shapes_np = []
+        # return the coordinates of the cells in each cluster
+        for l in unique_labels:
+            class_member_mask = labels == l
+            xy = spot_cells[class_member_mask & core_samples_mask]
+            xy = np.delete(xy, 2, axis=1) # remove z dimension
+            alpha_shape = alphashape.alphashape(xy, alpha=10)
+            # plot alpha shape with Polygon(list(alpha_shape.exterior.coords), alpha=0.2)
+            a_shapes.append((l, alpha_shape))
+
+            # a_shape_np = np.array(alpha_shape.exterior.coords)
+            # z_col = np.zeros((a_shape_np.shape[0],1))
+            # a_shape_np = np.hstack((a_shape_np, z_col))
+            # a_shapes_np.append(a_shape_np)
+        
+        plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes)
+        
+        stats.append({
+            "frame": i,
+            "n_clusters": n_clusters,
+            "n_noise_pts": n_noise,
+            # "silhouette_coeff": s_coeff,
+        })
+
+    stats_df = pd.DataFrame(stats)
+    print(stats_df)
+
+
+def plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes):
+
+    colors = [plt.cm.Spectral(each) for each in np.linspace(0, 1, len(unique_labels))]
+    fig, ax = plt.subplots(figsize=(10,9))
+    for k, col in zip(unique_labels, colors):
+        if k == -1:
+            # Black used for noise.
+            col = [0, 0, 0, 1]
+
+        class_member_mask = labels == k
+
+        xy = spot_cells[class_member_mask & core_samples_mask]
+        ax.scatter(
+            xy[:, 0],
+            xy[:, 1],
+            c=tuple(col),
+            edgecolors="k",
+        )
+
+        xy = spot_cells[class_member_mask & ~core_samples_mask]
+        ax.scatter(
+            xy[:, 0],
+            xy[:, 1],
+            c=tuple(col),
+            edgecolors="k",
+        )
+        a_shape = a_shapes[k][1]
+        print(type(a_shape))
+        if isinstance(a_shape, shapely.geometry.polygon.Polygon):
+            a_shape_poly = list(a_shape.exterior.coords)
+            ax.add_patch(Polygon(a_shape_poly, facecolor=col, alpha=0.2))
+    
+
+    plt.title(f"Estimated number of clusters: {len(unique_labels)}")
+    plt.show()
+
 def print_help():
     help_message = """
     Usage: python3 render.py [vtk_directory] [options]
@@ -198,8 +289,9 @@ if __name__ == "__main__":
         folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
 
         vtks = load(f"{folder_path}/*.vtk")
-        tissue_stats(vtks)
-        render_movie(c_prop, folder_path, export, vtks)
+        pattern_stats(vtks)
+        # tissue_stats(vtks)
+        # render_movie(c_prop, folder_path, export, vtks)
         #show_chem_grad(folder_path)
 
 
