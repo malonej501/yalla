@@ -20,13 +20,13 @@ const int n_max = 200000;                       // Max number of cells
 const float c_div = 0.008;                    // Probability of cell division per iteration
 //const float c_die = 0.05;                   // Probability of cell death per iteration
 const float noise = 0;//0.5;                        // Magnitude of noise returned by generate_noise
-const int cont_time = 30;                    // Simulation duration in arbitrary time units 1 = 1 day
+const int cont_time = 20;                    // Simulation duration in arbitrary time units 1 = 1 day
 const float dt = 1;                           // Time step for Euler integration
 const int no_frames = 100;                      // no. frames of simulation output to vtk - divide the simulation time by this number
 const int n_new_cells = 300;                              // no. cells to add to staging after each simulation iteration
 
 // tissue initialisation
-const float init_dist = 0.2; //0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
+const float init_dist = 0.01; //0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
 const float A_dist = 0.05;                      // mean distance between iri-iri
 const float B_dist = 0.036;                      // mean distance between xan-xan
 const int n_0 = 700;                            // Initial number of cells, 50 of each type and 300 of each staging
@@ -113,10 +113,10 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
 
     // we define the default strength of adhesion and repulsion
-    float Adh = 0;
+    float Adh = 1;
     float adh = 1;
-    float Rep = Rix;
-    float rep = rix;
+    float Rep = 1;
+    float rep = 1;
 
     if (diff_adh_rep) {
         if (d_cell_type[i] == 1 and d_cell_type[j] == 1) { // iri -> iri
@@ -144,12 +144,12 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
             rep = rxx;
         }
     }
-    //     if (d_cell_type[i] == 0 and d_cell_type[j] == 0) { // dead -> dead, so dead cells achieve a relaxed state
-    //         Adh = Aix;
-    //         adh = aix;
-    //         Rep = Rix;
-    //         rep = rix;
-    //     }
+        if (d_cell_type[i] == 0 and d_cell_type[j] == 0) { // dead -> dead, so dead cells achieve a relaxed state
+            Adh = 0;
+            adh = 1;
+            Rep = Rix;
+            rep = rix;
+        }
     // } else {
     //     Adh = Aix;
     //     adh = aix;
@@ -189,7 +189,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     if (i >= n_cells) return; // return nothing if the index is greater than n_cells
     if (n_cells >= (n_max * 0.9)) return;  // return nothing if the no. cells starts to approach the max
 
-    if (d_cell_type[i] != -1) return; // skip unless a cell is of staging type
+    if (!(d_cell_type[i] == -1 || d_cell_type[i] == -2)) return; // skip unless a cell is of staging type
 
     // if all conditions are met, the cell is moved from the staging area into the actual tissue, if not it is moved to the dead area
     if (d_cell_type[i] == -1){
@@ -212,9 +212,9 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
             return;
         }
     }
+    //printf("Cell should die");
 
     d_X[i].z -= r_max * 10; // when cells die, pop them out by 10 times the maximum interaction distance
-    //printf("Cell index: %d, Cell type: %d, Position: %f\n", i, d_cell_type[i], d_X[i].z);
     d_cell_type[i] = 0; // set cell type to 0 which means dead
 
 }
@@ -445,7 +445,8 @@ int main(int argc, char const* argv[])
         for (float T = 0.0; T < 1.0; T+=dt) {
             //generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
             stage_new_cells<<<(cells.get_d_n() + 128 -1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n, n_new_cells);
-            //proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
+            cells.take_step<pairwise_force>(0.0, generic_function);
+            proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
             cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);
             // death<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate death
         }

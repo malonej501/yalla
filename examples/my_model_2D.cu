@@ -21,14 +21,14 @@ const int n_max = 200000;                       // Max number of cells
 //const float c_die = 0.05;                   // Probability of cell death per iteration
 const float noise = 0;//0.5;                        // Magnitude of noise returned by generate_noise
 const int cont_time = 100;                    // Simulation duration in arbitrary time units 1 = 1 day
-const float dt = 0.01;                           // Time step for Euler integration
+const float dt = 0.1;                           // Time step for Euler integration
 const int no_frames = 100;                      // no. frames of simulation output to vtk - divide the simulation time by this number
 
 // tissue initialisation
-const float init_dist = 0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
+const float init_dist = 0.2; //0.082;                    // mean distance between cells when initialised - set to distance between xanthophore and melanophore
 const float A_dist = 0.05;                      // mean distance between iri-iri
 const float B_dist = 0.036;                      // mean distance between xan-xan
-const int n_0 = 500;                            // Initial number of cells
+const int n_0 = 100;                            // Initial number of cells
 
 // cell migration parameters
 const bool diff_adh_rep = true;                // set to false to turn off differential adhesion and repulsion
@@ -101,7 +101,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         return dF;
     }
     // define constants for rate of diffusion
-    float D_u = 0.1;
+    float D_u = 0.11;
     float D_v = 0.01;
     dF.u = -D_u * r.u; // r.u is the difference in chemical concentration between cells in pair
     dF.v = -D_v * r.v;
@@ -210,25 +210,25 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     if (d_cell_type[i] == 0 or d_X[i].y == r_max*10) return; // if cell is dead, don't divide
 
     // random cell division
-    float rnd = curand_uniform(&d_state[i]);
-    // if (rnd > (c_div * dt)) return;
-    if ((d_cell_type[i] == 1 and rnd < iriRand * 0.01) or (d_cell_type[i] == 2 and rnd < xanRand * 0.01)) {
-        int n = atomicAdd(d_n_cells, 1);
-        float theta = acosf(2. * curand_uniform(&d_state[i]) - 1);
-        float phi = curand_uniform(&d_state[i]) * 2 * M_PI;
-        d_X[n].x = d_X[i].x + 0.6 / 2 * sinf(theta) * cosf(phi);
-        d_X[n].y = d_X[i].y + 0.6 / 2 * sinf(theta) * sinf(phi);
-        d_X[n].z = 0;
-        // half the amount of each chemical upon cell division in the parent cell
-        d_X[i].u *= 0.5;
-        d_X[i].v *= 0.5;
-        // the child inherits the other half of the amount of the chemical
-        d_X[n].u = d_X[i].u;
-        d_X[n].v = d_X[i].v;
-        d_old_v[n] = d_old_v[i];
-        d_mechanical_strain[n] = 0.0;
-        d_cell_type[n] = d_cell_type[i]; // child cells are always the same type as parents
-    }    
+    // float rnd = curand_uniform(&d_state[i]);
+    // // if (rnd > (c_div * dt)) return;
+    // if ((d_cell_type[i] == 1 and rnd < iriRand * 0.01) or (d_cell_type[i] == 2 and rnd < xanRand * 0.01)) {
+    //     int n = atomicAdd(d_n_cells, 1);
+    //     float theta = acosf(2. * curand_uniform(&d_state[i]) - 1);
+    //     float phi = curand_uniform(&d_state[i]) * 2 * M_PI;
+    //     d_X[n].x = d_X[i].x + 0.6 / 2 * sinf(theta) * cosf(phi);
+    //     d_X[n].y = d_X[i].y + 0.6 / 2 * sinf(theta) * sinf(phi);
+    //     d_X[n].z = 0;
+    //     // half the amount of each chemical upon cell division in the parent cell
+    //     d_X[i].u *= 0.5;
+    //     d_X[i].v *= 0.5;
+    //     // the child inherits the other half of the amount of the chemical
+    //     d_X[n].u = d_X[i].u;
+    //     d_X[n].v = d_X[i].v;
+    //     d_old_v[n] = d_old_v[i];
+    //     d_mechanical_strain[n] = 0.0;
+    //     d_cell_type[n] = d_cell_type[i]; // child cells are always the same type as parents
+    // }    
 
     // conditions on iri for division
     if (d_cell_type[i] == 1 and d_ngs_type_A[i] < alpha * d_ngs_type_B[i]) return; // short range condition 1
@@ -244,7 +244,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
 
     int n = atomicAdd(d_n_cells, 1);
 
-    // new cell added next to parent at random angle
+    // new cell added next to parent at random angle - this way is ideal for 3D tissue aswell
     float theta = acosf(2. * curand_uniform(&d_state[i]) - 1);
     float phi = curand_uniform(&d_state[i]) * 2 * M_PI;
 
