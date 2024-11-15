@@ -50,20 +50,48 @@ void random_disk_z(
 }
 
 template<typename Pt, template<typename> class Solver>
-void volk_zebra_2D(
+void two_random_disk_z(
     float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
+{
+    assert(n_0 < *points.h_n);
+    std::random_device rd;
+    srand(rd());
+    // Radius based on hexagonal lattice
+    auto r_max = pow((*points.h_n - n_0) / 0.9069, 1. / 2) * dist_to_nb / 2;
+    for (auto i = n_0; i < *points.h_n; i++) {
+        auto r = r_max * pow(rand() / (RAND_MAX + 1.), 1. / 2);
+        auto phi = rand() / (RAND_MAX + 1.) * 2 * M_PI;
+
+        // define two centers, one for the first half of the initial cells at x=-0.5 and one for rest at x=0.5
+        float cx = (i < *points.h_n / 2) ? -dist_to_nb * 20 : dist_to_nb * 20;
+
+        points.h_X[i].x = cx + r * sin(phi);
+        points.h_X[i].y = r * cos(phi);
+        points.h_X[i].z = 0;
+    }
+    points.copy_to_device();
+}
+
+template<typename Pt, template<typename> class Solver>
+void volk_zebra_2D(
+    float A_dist, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
 {
     assert(n_0 < *points.h_n);
     //std::random_device rd;
     //srand(rd());
     // define 5 stripes
-    std::vector<float> y_pos{0.0,0.45,0.5,0.55,1.1}; //initial positions of cell stripes
+    std::vector<float> y_pos{0.0,0.418,0.5,0.582,1.0}; //initial positions of cell stripes
 
+    // int cellsPer_Astripe = 2 / A_dist;
+    //int cellsPer_Bstripe = 2 / B_dist;
     int cellsPer_stripe = *points.h_n / y_pos.size(); // calculate no. cells in each stripe
     for (int i = 0; i < y_pos.size(); i++) {
+        // int cellsPer_stripe = *points.h_n /
         for (int j = 0; j < cellsPer_stripe; j++) {
             int index = i * cellsPer_stripe + j;
-            points.h_X[index].x = j * dist_to_nb;
+            if (y_pos[i] == 0.5) points.h_X[index].x = j * 0.05; //initialise xanthophores closer together
+            else points.h_X[index].x = j * 0.1;
+            // points.h_X[index].x = j * dist_to_nb;
             points.h_X[index].y = y_pos[i];
             points.h_X[index].z = 0;
             // if (i == 2) {
@@ -74,6 +102,140 @@ void volk_zebra_2D(
             //     d_cell_type[index] = 2;
             // }
         }
+    }
+    points.copy_to_device();
+}
+
+template<typename Pt, template<typename> class Solver>
+void volk_zebra_3stripe(
+    float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
+{
+    assert(n_0 < *points.h_n);
+    // define 7 stripes
+    std::vector<float> y_pos{0.0,0.209,0.418,0.5,0.582,0.791,1.0}; //initial positions of cell stripes
+
+    int cellsPer_stripe = *points.h_n / y_pos.size(); // calculate no. cells in each stripe
+    for (int i = 0; i < y_pos.size(); i++) {
+        for (int j = 0; j < cellsPer_stripe; j++) {
+            int index = i * cellsPer_stripe + j;
+            points.h_X[index].x = j * dist_to_nb;
+            points.h_X[index].y = y_pos[i];
+            points.h_X[index].z = 0;
+        }
+    }
+    points.copy_to_device();
+}
+
+template<typename Pt, template<typename> class Solver>
+void volk_zebra_3stripe_ablated_empty(
+    float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
+{
+    assert(n_0 < *points.h_n);
+    // define 7 stripes
+    std::vector<float> y_pos{0.0,0.209,0.418,0.5,0.582,0.791,1.0}; //initial positions of cell stripes
+    int gap_size = 10; // define the size of the gap in the tissue in number of cells 
+
+    int cellsPer_stripe = *points.h_n / y_pos.size(); // calculate no. cells in each stripe
+    for (int i = 0; i < y_pos.size(); i++) {
+        for (int j = 0; j < cellsPer_stripe; j++) {
+            int index = i * cellsPer_stripe + j;
+            if (j < cellsPer_stripe / 2) {
+                points.h_X[index].x = j * dist_to_nb;
+            } else {
+                points.h_X[index].x = (j * dist_to_nb) + (gap_size * dist_to_nb);
+            }
+            
+            points.h_X[index].y = y_pos[i];
+            points.h_X[index].z = 0;
+        }
+    }
+    points.copy_to_device();
+}
+
+// template<typename Pt, template<typename> class Solver>
+// void volk_zebra_3stripe_ablated(
+//     float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
+// {
+//     assert(n_0 < *points.h_n);
+//     // define 7 stripes
+//     std::vector<float> y_pos{0.0,0.209,0.418,0.5,0.582,0.791,1.0}; //initial positions of cell stripes
+
+//     int cellsPer_stripe = *points.h_n / y_pos.size(); // calculate no. cells in each stripe
+//     for (int i = 0; i < y_pos.size(); i++) {
+//         for (int j = 0; j < cellsPer_stripe; j++) {
+//             int index = i * cellsPer_stripe + j;
+//             if (j < cellsPer_stripe * 0.4) {
+//                 points.h_X[index].x = j * dist_to_nb;
+//                 points.h_X[index].y = y_pos[i];
+//                 }
+//             if (j >= cellsPer_stripe * 0.4 and
+//                 j < cellsPer_stripe * 0.6
+//             ) {
+//                 float xl = cellsPer_stripe * dist_to_nb * 0.4;
+//                 float xu = cellsPer_stripe * dist_to_nb * 0.6;
+//                 float yl = 0;
+//                 float yu = 1;
+//                 points.h_X[index].x = (rand() / (RAND_MAX + 1.)) * (xu - xl);
+//                 points.h_X[index].y = (rand() / (RAND_MAX + 1.)) * (yu - yl);
+//             }
+//             if (j >= cellsPer_stripe * 0.6) {
+//                 points.h_X[index].x = (j * dist_to_nb) + (cellsPer_stripe * dist_to_nb * 0.6);
+//                 points.h_X[index].y = y_pos[i];
+//             }
+
+            
+            
+//             points.h_X[index].z = 0;
+//         }
+//     }
+//     points.copy_to_device();
+// }
+
+template<typename Pt, template<typename> class Solver>
+void volk_zebra_3stripe_ablated(
+    float dist_to_nb, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
+{
+    assert(n_0 < *points.h_n);
+    // define 7 stripes
+    std::vector<float> y_pos{0.0,0.209,0.418,0.5,0.582,0.791,1.0};  //initial positions of cell stripes
+    int gap_size = 10;                                              // define the size of the gap in the tissue in number of cells 
+    int nc_gap = pow(gap_size, 2);                                  // number of cells to fill the gap
+    int nc_stripe = *points.h_n - nc_gap;                         // total number of cells in all stripes (just not the gap)
+    // printf("nc_stripe %d\n", nc_stripe);
+
+    int cellsPer_stripe = (nc_stripe / y_pos.size()); // calculate no. cells in each stripe
+    // printf("cellsPer_stripe: %d\n", cellsPer_stripe);
+    // printf("*points.h_n: %d\n", *points.h_n);
+    // save gap_size^2 number of cells to fill the gap
+    for (int i = 0; i < y_pos.size(); i++) {
+        for (int j = 0; j < cellsPer_stripe; j++) {
+            int index = i * cellsPer_stripe + j;
+            if (j < cellsPer_stripe / 2) {
+                points.h_X[index].x = j * dist_to_nb;
+            } else {
+                points.h_X[index].x = (j * dist_to_nb) + (gap_size * dist_to_nb);
+            }
+            points.h_X[index].y = y_pos[i];
+            points.h_X[index].z = 0;
+            // printf("index %d\n", index);
+            // printf("pos: x = %f, y = %f, z = %f\n", points.h_X[index].x, points.h_X[index].y, points.h_X[index].z);
+        }
+    }
+
+    // initialise randomness
+    std::random_device rd;
+    srand(rd());
+    // fill gap with a random distribution of cells
+    for (int index = nc_stripe; index < *points.h_n; index++) {
+        float xl = (cellsPer_stripe / 2) * dist_to_nb;
+        float xu = ((cellsPer_stripe / 2) * dist_to_nb) + (gap_size * dist_to_nb);
+        float yl = 0;
+        float yu = 1;
+        points.h_X[index].x = xl + ((xu - xl) * rand() / (RAND_MAX + 1.));
+        points.h_X[index].y = yl + ((yu - yl) * rand() / (RAND_MAX + 1.));
+        points.h_X[index].z = 0;  
+        // printf("index %d\n", index);
+        // printf("pos: x = %f, y = %f, z = %f\n", points.h_X[index].x, points.h_X[index].y, points.h_X[index].z);
     }
     points.copy_to_device();
 }
