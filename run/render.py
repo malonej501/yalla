@@ -3,6 +3,7 @@ import imageio
 import os
 import sys
 import shapely
+import math
 from matplotlib.patches import Polygon
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -28,7 +29,7 @@ def render_movie(c_prop, folder_path, export, vtks):
     plt = Plotter(interactive=False)
     # ax = addons.Axes(plt, xrange=(lims[0][0],lims[0][1]), yrange=(lims[1][0],lims[1][1]), zrange=(0,0))
     # ax.name = "ax"
-    plt.show(zoom="tight", axes=13)
+    plt.show(zoom="tight")#, axes=13)
     # plt.zoom(zoom)
 
     if export:
@@ -172,13 +173,18 @@ def tissue_stats(vtks):
     print(stats_df)
 
 def pattern_stats(vtks):
-
+    
+    plt = Plotter(interactive=False)
+    plt.show(zoom="tight")
     stats = []
+    frames = []
+    a_meshes = []
+    p_meshes = []
     for i, mesh in enumerate(vtks):
         mesh = vtks[i]
-        spot_cells = mesh.vertices[mesh.pointdata["cell_type"] == 1] # return positions of spot cells
+        X_spots = mesh.vertices[mesh.pointdata["cell_type"] == 1] # return positions of spot cells
         # eps - maximum distance between two samples for one to be considered as in the neighborhood of the other - set to r_max
-        db = DBSCAN(eps=0.1, min_samples=1).fit(spot_cells)
+        db = DBSCAN(eps=0.1, min_samples=1).fit(X_spots)
         labels = db.labels_
 
         # Number of clusters in labels, ignoring noise if present.
@@ -192,32 +198,102 @@ def pattern_stats(vtks):
         core_samples_mask[db.core_sample_indices_] = True
 
         a_shapes = []
-        a_shapes_np = []
+        areas = []
+        roundnesses = [] # roundness is only computed for polygons - not lines, points etc.
+        tags = []
+        a_meshes = []
+        p_meshes = []
+        n_poly = 0
         # return the coordinates of the cells in each cluster
         for l in unique_labels:
             class_member_mask = labels == l
-            xy = spot_cells[class_member_mask & core_samples_mask]
+            xy = X_spots[class_member_mask & core_samples_mask]
+            p_mesh = Points(xy).point_size(7).color(l)
+            p_mesh.name = "p_mesh"
+            p_meshes.append(p_mesh)
             xy = np.delete(xy, 2, axis=1) # remove z dimension
             alpha_shape = alphashape.alphashape(xy, alpha=10)
+
             # plot alpha shape with Polygon(list(alpha_shape.exterior.coords), alpha=0.2)
             a_shapes.append((l, alpha_shape))
+            areas.append(alpha_shape.area)
+            if alpha_shape.geom_type == "Polygon": #or alpha_shape.geom_type == "MultiPolygon":
+                n_poly += 1 # count number of polygons
+                a_shape_np = np.array(alpha_shape.exterior.coords)
+                z_col = np.zeros((a_shape_np.shape[0],1))
+                a_shape_np = np.hstack((a_shape_np, z_col))
+                cells = np.array([range(len(a_shape_np))])
 
-            # a_shape_np = np.array(alpha_shape.exterior.coords)
-            # z_col = np.zeros((a_shape_np.shape[0],1))
-            # a_shape_np = np.hstack((a_shape_np, z_col))
-            # a_shapes_np.append(a_shape_np)
-        
-        plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes)
+                a_mesh = Mesh([a_shape_np,cells])
+                a_mesh_ids = a_mesh.labels(content=np.array([l]), on="cells",yrot=180)
+                a_mesh_ids.name = "tag"
+                tags.append(a_mesh_ids)
+                a_mesh.color(l).alpha(0.2)
+                a_mesh.name = "a_mesh"
+                a_meshes.append(a_mesh)
+
+                perimeter = shapely.length(alpha_shape)
+                roundnesses.append((4 * math.pi * alpha_shape.area) / (perimeter**2)) # 1 for perfect circle, 0 for non-circular
+
+        info = Text2D(
+            txt=(f"i: {i}\n"
+            f"n_clusters: {len(unique_labels)}\n"
+            f"n_polygons: {n_poly}\n"
+            f"mean_area: {np.mean(areas):.4f}\n"
+            f"std_area: {np.std(areas):.4f}\n"
+            f"mean_roundnesses: {np.mean(roundnesses):.4f}\n"),
+            pos="bottom-left")
+        info.name = "info"
+
+        plt.remove("a_mesh")
+        plt.remove("p_mesh")
+        plt.remove("info")
+        plt.remove("tag")
+        frames.append((a_meshes,p_meshes,info,tags))
+        plt.add(a_meshes)
+        plt.add(p_meshes)
+        plt.add(info)
+        plt.add(tags)
+        plt.render().reset_camera()
+
+        # plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes)
         
         stats.append({
             "frame": i,
             "n_clusters": n_clusters,
             "n_noise_pts": n_noise,
+            "n_polygons": n_poly,
             # "silhouette_coeff": s_coeff,
+            "mean_area": np.mean(areas),
+            "std_area": np.std(areas),
+            "mean_roundness": np.mean(roundnesses)
         })
 
     stats_df = pd.DataFrame(stats)
     print(stats_df)
+
+    def slider1(widget, event):
+        val = widget.value # get the slider current value
+
+        plt.remove("a_mesh")
+        plt.remove("p_mesh")
+        plt.remove("info")
+        plt.remove("tag")
+
+        a_meshes, p_meshes, info, tags= frames[int(val)]
+
+        plt.add(a_meshes)
+        plt.add(p_meshes)
+        plt.add(info)
+        plt.add(tags)
+        plt.render()
+
+    plt.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
+    plt.interactive().close()
+
+    
+
+    return stats_df
 
 
 def plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes):
@@ -248,13 +324,23 @@ def plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_sh
         )
         a_shape = a_shapes[k][1]
         print(type(a_shape))
-        if isinstance(a_shape, shapely.geometry.polygon.Polygon):
+        #if isinstance(a_shape, shapely.geometry.polygon.Polygon):
+        if a_shape.geom_type == "Polygon":
             a_shape_poly = list(a_shape.exterior.coords)
             ax.add_patch(Polygon(a_shape_poly, facecolor=col, alpha=0.2))
     
 
     plt.title(f"Estimated number of clusters: {len(unique_labels)}")
     plt.show()
+
+# def render_alpha_shape_mesh(vtks):
+
+#     _, a_shapes_np = pattern_stats(vtks)
+
+#     # plt = applications.Browser(vtks, bg = 'k')
+#     # plt.show(interactive = True).close()
+#     print(mesh)
+    
 
 def print_help():
     help_message = """
@@ -289,6 +375,7 @@ if __name__ == "__main__":
         folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
 
         vtks = load(f"{folder_path}/*.vtk")
+        # render_alpha_shape_mesh(vtks)
         pattern_stats(vtks)
         # tissue_stats(vtks)
         # render_movie(c_prop, folder_path, export, vtks)
