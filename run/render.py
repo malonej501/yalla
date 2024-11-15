@@ -174,8 +174,8 @@ def tissue_stats(vtks):
 
 def pattern_stats(vtks):
 
-    plt = Plotter(interactive=False)
-    plt.show(zoom="tight",axes=13)
+    plt = Plotter(interactive=False, shape=(1,2))
+    plt.show(zoom="tight")#,axes=13)
     stats = []
     frames = []
     a_meshes = []
@@ -231,6 +231,7 @@ def pattern_stats(vtks):
                 a_mesh_ids.name = "tag"
                 tags.append(a_mesh_ids)
                 a_mesh.color(l).alpha(0.2)
+                a_mesh.triangulate() # to ensure neat rendering of final shapes
                 a_mesh.name = "a_mesh"
                 a_meshes.append(a_mesh)
 
@@ -272,8 +273,11 @@ def pattern_stats(vtks):
             "mean_roundness": np.mean(roundnesses),
             "std_roundness": np.std(roundnesses)
         })
-
     stats_df = pd.DataFrame(stats)
+
+
+
+    
     print(stats_df)
 
     def slider1(widget, event):
@@ -291,9 +295,10 @@ def pattern_stats(vtks):
         plt.add(info)
         plt.add(tags)
         plt.render()
-    plot_alpha_shape_stats(stats_df)
-    plt.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
-    plt.interactive()
+    fig = plot_alpha_shape_stats(stats_df)
+    plt.add(fig, at=1)
+    plt.add_slider(slider1, 0, len(frames)-1, pos=([0.1,0.9],[0.4,0.9]), value=len(frames))
+    plt.interactive().close()
 
 
     
@@ -326,7 +331,8 @@ def plot_alpha_shape_stats(d):
 
     fig.supxlabel("Frame no.")
     fig.tight_layout()
-    plt.show()
+    # plt.show()
+    return fig
 
 
 def plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes):
@@ -383,6 +389,9 @@ def print_help():
         -h              Show this help message and exit.
         -e              Export the rendering to video file.
         -c c_prop       Specify which cell property to colourise.
+        -f function     Pass which function you want to perform:
+                        0   ...render moive (default)
+                        1   ...cluster spot cells and get spot stats
         """
     
     print(help_message)
@@ -396,22 +405,26 @@ if __name__ == "__main__":
         print_help()
     else:
         output_folder = args[0]
+        # set default parameters
         export = False
+        c_prop = "cell_type"
+        func = 0
+        # fetch custom parameters
         if "-e" in args:
             export = True
         if "-c" in args:
-            c_prop_idx = args.index("-c") + 1 # identify the index of the c_prop argument - comes after -c flag
-            c_prop = str(args[c_prop_idx])
-        else:
-            c_prop = "cell_type"
+            c_prop = str(args[args.index("-c") + 1]) # idx comes after -c flag
+        if "-f" in args:
+            func = int(args[args.index("-f") + 1])
+            
 
         folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
 
         vtks = load(f"{folder_path}/*.vtk")
-        # render_alpha_shape_mesh(vtks)
-        pattern_stats(vtks)
-        # tissue_stats(vtks)
-        # render_movie(c_prop, folder_path, export, vtks)
-        #show_chem_grad(folder_path)
+        if func == 0:
+            render_movie(c_prop, folder_path, export, vtks)
+        elif func == 1:
+            pattern_stats(vtks)
+
 
 
