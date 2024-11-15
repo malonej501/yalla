@@ -173,9 +173,9 @@ def tissue_stats(vtks):
     print(stats_df)
 
 def pattern_stats(vtks):
-    
+
     plt = Plotter(interactive=False)
-    plt.show(zoom="tight")
+    plt.show(zoom="tight",axes=13)
     stats = []
     frames = []
     a_meshes = []
@@ -183,8 +183,10 @@ def pattern_stats(vtks):
     for i, mesh in enumerate(vtks):
         mesh = vtks[i]
         X_spots = mesh.vertices[mesh.pointdata["cell_type"] == 1] # return positions of spot cells
-        # eps - maximum distance between two samples for one to be considered as in the neighborhood of the other - set to r_max
-        db = DBSCAN(eps=0.1, min_samples=1).fit(X_spots)
+        if X_spots.size == 0: # skip the iteration if there are no spot cells present in the vtk
+            continue
+        # eps - maximum distance between two samples for one to be considered as in the neighborhood of the other - set to equilibrium distance between spot cells - check force potential
+        db = DBSCAN(eps=0.05, min_samples=1).fit(X_spots)
         labels = db.labels_
 
         # Number of clusters in labels, ignoring noise if present.
@@ -200,10 +202,10 @@ def pattern_stats(vtks):
         a_shapes = []
         areas = []
         roundnesses = [] # roundness is only computed for polygons - not lines, points etc.
+        n_poly = 0
         tags = []
         a_meshes = []
         p_meshes = []
-        n_poly = 0
         # return the coordinates of the cells in each cluster
         for l in unique_labels:
             class_member_mask = labels == l
@@ -212,11 +214,11 @@ def pattern_stats(vtks):
             p_mesh.name = "p_mesh"
             p_meshes.append(p_mesh)
             xy = np.delete(xy, 2, axis=1) # remove z dimension
-            alpha_shape = alphashape.alphashape(xy, alpha=10)
+            alpha_shape = alphashape.alphashape(xy, alpha=15)
 
             # plot alpha shape with Polygon(list(alpha_shape.exterior.coords), alpha=0.2)
             a_shapes.append((l, alpha_shape))
-            areas.append(alpha_shape.area)
+            areas.append(alpha_shape.area) # calculate area for all types of geometries, not just polygons
             if alpha_shape.geom_type == "Polygon": #or alpha_shape.geom_type == "MultiPolygon":
                 n_poly += 1 # count number of polygons
                 a_shape_np = np.array(alpha_shape.exterior.coords)
@@ -241,7 +243,8 @@ def pattern_stats(vtks):
             f"n_polygons: {n_poly}\n"
             f"mean_area: {np.mean(areas):.4f}\n"
             f"std_area: {np.std(areas):.4f}\n"
-            f"mean_roundnesses: {np.mean(roundnesses):.4f}\n"),
+            f"mean_roundnesses: {np.mean(roundnesses):.4f}\n"
+            f"std_area: {np.std(roundnesses):.4f}\n"),
             pos="bottom-left")
         info.name = "info"
 
@@ -266,7 +269,8 @@ def pattern_stats(vtks):
             # "silhouette_coeff": s_coeff,
             "mean_area": np.mean(areas),
             "std_area": np.std(areas),
-            "mean_roundness": np.mean(roundnesses)
+            "mean_roundness": np.mean(roundnesses),
+            "std_roundness": np.std(roundnesses)
         })
 
     stats_df = pd.DataFrame(stats)
@@ -287,13 +291,42 @@ def pattern_stats(vtks):
         plt.add(info)
         plt.add(tags)
         plt.render()
-
+    plot_alpha_shape_stats(stats_df)
     plt.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
-    plt.interactive().close()
+    plt.interactive()
+
 
     
 
     return stats_df
+
+def plot_alpha_shape_stats(d):
+
+    fig, axs = plt.subplots(nrows=2,ncols=2,figsize=(10,8))
+
+    axs = axs.flatten()
+
+    ax = axs[0]
+    ax.plot(d["frame"], d["n_clusters"])
+    ax.set_ylabel("No. clusters")
+
+    ax = axs[1]
+    ax.plot(d["frame"], d["n_polygons"])
+    ax.set_ylabel("No. alpha polygons")
+
+    ax = axs[2]
+    ax.plot(d["frame"], d["mean_area"])
+    ax.fill_between(d["frame"], d["mean_area"] - d["std_area"], d["mean_area"] + d["std_area"], alpha=0.2)
+    ax.set_ylabel(r"Mean spot area $\pm$std")
+
+    ax = axs[3]
+    ax.plot(d["frame"], d["mean_roundness"])
+    ax.fill_between(d["frame"], d["mean_roundness"] - d["std_roundness"], d["mean_roundness"] + d["std_roundness"], alpha=0.2)
+    ax.set_ylabel(r"Mean spot roundness $(\frac{4\pi \times \text{Area}}{\text{Perimeter}^2})$ $\pm$std")
+
+    fig.supxlabel("Frame no.")
+    fig.tight_layout()
+    plt.show()
 
 
 def plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes):
