@@ -17,7 +17,7 @@
 // global simulation parameters
 const float r_max = 0.1;                        // Max distance betwen two cells for which they will interact - set to upper bound of donut
 const int n_max = 200000;                       // Max number of cells
-const float noise = 0.005;                        // Magnitude of noise returned by generate_noise - 0.01 is reasonable
+const float noise = 0.01;//0.01;//0.005;                        // Magnitude of noise returned by generate_noise - 0.01 is reasonable
 const int cont_time = 1000;                    // Simulation duration in arbitrary time units 1 = 1 day
 const float dt = 0.1;                           // Time step for Euler integration
 const int no_frames = 100;                      // no. frames of simulation output to vtk - divide the simulation time by this number
@@ -48,18 +48,41 @@ const float Aii = 0.0019;
 // proliferation parameters
 // const float A_div = 0.012;                      // 0.02 works well if you have the overcrowding condition
 const float A_div = 0.012;                      // 0.02 works well if you have the overcrowding condition
-//const float B_div = 0.012;                   
-const float B_div = 0;                   
-// const float r_A_birth = 0.08;                   //chance of iridophore birth from background cell
-const float r_A_birth = 0.000008;                   //chance of iridophore birth from background cell
+const float B_div = 0.012;                   
+// const float B_div = 0;                   
+const float r_A_birth = 0.008;                   //chance of iridophore birth from background cell
+// const float r_A_birth = 0.000008;                   //chance of iridophore birth from background cell
 const float uthresh = 0.015;                      // B cells will not change to A if the amount of u exceeds this value
 const float mech_thresh = 0.03;                 // if the mechanical strain on a cell exceeds this value, don't divide
 
 // chemical diffusion rates - this is Fick's first law?
 //const float D_u = 1.0;
-const float D_u = 0.001;
-// const float D_v = 0.01;
-const float D_v = 0.002;
+// const float D_u = 0.001;
+// // const float D_v = 0.01;
+// const float D_v = 0.002;
+// const float D_u = 0.01;
+// const float D_v = 0.02;
+// const float D_u = 0.004;
+// const float D_v = 0.1;
+// const float D_u = 0.005;
+// const float D_v = 0.2;
+const float D_u = 0.01;
+const float D_v = 0.2;
+// const float D_u = 0.08; //these give much more spaced out spots but require t_max=10000
+// const float D_v = 2;
+
+// Turing parameters
+// const auto lambda = 0.0075;
+
+// const auto D_u = 0.001;
+// const auto D_v = 0.2;
+// const auto f_v = 1.0;
+// const auto f_u = 80.0;
+// const auto g_u = 80.0;
+// const auto m_u = 0.25;  // degradation rates
+// const auto m_v = 0.75;
+// const auto s_u = 0.05;
+
 
 // position of inter-ray spot formayion domains
 // std::pair<float, float> iray[4] = {
@@ -113,6 +136,57 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         // dF.u = k_prod * (1.0 - Xi.u);
         // dF.v = k_prod * (1.0 - Xi.v);
 
+        // Gray-Scott
+        // dF.u = ((powf(Xi.u, 2) * Xi.v) - ((0.03 + 0.062) * Xi.u)) * 0.1; 
+        // dF.v = - ((powf(Xi.u, 2) * Xi.v) + (0.03 * (1 - Xi.v))) * 0.1;
+
+        // Gray-Scott with varying parameters
+        // float a = powf(10, Xi.x) / 10000; // these give the full parameter space zoomed out
+        // float b = powf(10, Xi.y) / 10000;
+        // float a = Xi.x / 10;
+        // float b = Xi.y / 100;
+        // float a = (Xi.x * 0.01) + 0.2; // these give the boundary more zoomed in
+        // float b = Xi.y * 0.001;
+        // float a = (Xi.x * 0.05) + 0.233;
+        // float b = Xi.y * 0.05;
+        // float a = 0.26;
+        // float b = 0.03;
+        // float a = (Xi.x * 0.01);
+        // float b = (Xi.y * 0.01);
+        // float a = (Xi.x * 0.001) + 0.235;
+        // float b = Xi.y * 0.001;     
+        // float a = (Xi.x * 0.0001) + 0.237;
+        // float b = (Xi.y * 0.0001) + 0.0033;
+        // float a = 0.2372; // with D_U = 0.01, D_v = 0.02, this gives spotish patterns
+        // float b = 0.0035;
+        // float a = 0.2;
+        // float b = 0.001;
+        float a = 0.3;
+        float b = 0.003;
+        // // Gray-Scott
+        dF.u = 0.1 * ((powf(Xi.u, 2) * Xi.v) - ((a + b) * Xi.u)); 
+        dF.v = 0.1 * (-(powf(Xi.u, 2) * Xi.v) + (a * (1 - Xi.v)));
+
+        // Schnakenberg 
+        // float a = 0.1;
+        // float b = 0.9;        
+        // dF.u = a - (1 * Xi.u) + (1 * powf(Xi.u, 2) * Xi.v);
+        // dF.v = b - (1 * powf(Xi.u, 2) * Xi.v);
+
+      
+        //Giere-Meinhardt
+        // dF.u = 1.0 * ((Xi.u * Xi.u) / (Xi.v) - 0.1 * Xi.u + 0.3);
+        // dF.v = 1.0 * ((0.2 * Xi.u * Xi.u) - (0.4 * Xi.v));
+        // dF.u = 1.0 * ((Xi.u * Xi.u) / (Xi.v * (1+(0.1 * Xi.u * Xi.u))) - 1.0 * Xi.u + 0.02);
+        // dF.v = 1.0 * (( Xi.u * Xi.u) - (Xi.v));
+        // dF.u = powf(Xi.u, 2) / (Xi.v * ( 1 + (0.4 * powf(Xi.u,2))))- 1.0 * Xi.u + 0.02;
+        // dF.v = powf(Xi.u, 2) - Xi.v;
+        // dF.u = lambda *((f_u * Xi.u * Xi.u) / (1 + f_v * Xi.v) - m_u * Xi.u + s_u);
+        // dF.v = lambda * (g_u * Xi.u * Xi.u - m_v * Xi.v);
+
+        // Prevent negative values
+        // if (-dF.u > Xi.u) dF.u = 0.0f;
+        // if (-dF.v > Xi.v) dF.v = 0.0f;
 
 
         // // add degredation not dependent on anything
@@ -126,12 +200,20 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // dF.u = -D_u * r.u; // r.u is the difference in chemical concentration between cells in pair
     // dF.v = -D_v * r.v;
 
-    // Gray-Scott model
-    float feed = 0.03; // feed rate
-    float kill = 0.06; // kill rate
-    dF.u = (-D_u * r.u) + (dF.u * dF.v * dF.v) - ((feed + kill) * dF.u); 
-    dF.v = (-D_v * r.v) - (dF.u * dF.v * dF.v) + (feed * (1 - dF.v));
+    // // Gray-Scott model
+    // float feed = 0.03; // feed rate
+    // float kill = 0.06; // kill rate
+    // dF.u = (-D_u * r.u) + (dF.u * dF.v * dF.v) - ((feed + kill) * dF.u); 
+    // dF.v = (-D_v * r.v) - (dF.u * dF.v * dF.v) + (feed * (1 - dF.v));
 
+    // float d_u = Xi.x * 0.004;
+    // float d_v = Xi.y * 0.5;
+    // Diffusion
+    dF.u = (-D_u * r.u);
+    dF.v = (-D_v * r.v);
+    // Prevent negative values
+    // if (-dF.u > Xi.u) dF.u = 0.0f;
+    // if (-dF.v > Xi.v) dF.v = 0.0f;
 
     if (dist < 0.075) { // the radius of the inner disc
         // count no. each cell type in neighbourhood
@@ -168,8 +250,14 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
     dF.x -= r.x * F / dist;
     dF.y -= r.y * F / dist;
+    // dF.x -= 0; //turn off movement
+    // dF.y -= 0;
     dF.z -= 0;  
 
+    // dF is the change in x,y,z,u,v etc. over dt, for a particular pairwise interaction.
+    // Yalla sums the dFs for all interactions for cell i to give d_dX[i]
+    // Yalla compute the new values by multiplying d_dX[i] by dt and adding to the values in the current time step
+    // This function is in solvers in the euler_step function
     return dF;
 }
 
@@ -219,8 +307,8 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     
     // set child cell types    
     if (d_cell_type[i] == 2) {
-        //d_cell_type[n] = (curand_uniform(&d_state[i]) < r_A_birth and d_X[i].u < uthresh) ? 1 : 2; // sometimes cell type 2 produces cell type 1 random birth of cell type 1 is inhibited by chemical u
-        d_cell_type[n] = 2;
+        d_cell_type[n] = (curand_uniform(&d_state[i]) < r_A_birth and d_X[i].u < uthresh) ? 1 : 2; // sometimes cell type 2 produces cell type 1 random birth of cell type 1 is inhibited by chemical u
+        // d_cell_type[n] = 2;
     }
     if (d_cell_type[i] == 1) {
         d_cell_type[n] = 1;
@@ -349,8 +437,8 @@ int main(int argc, char const* argv[])
     // Solution<Cell, Grid_solver> cells{n_max, 50, r_max}; //originally using r_max*5
     *cells.h_n = n_0;
     //random_sphere(0.7, cells);
-    random_disk_z(init_dist, cells);
-    // regular_rectangle(init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells); //initialise square with nx=n_0/2 center will be at (y,x) = (1,1)
+    // random_disk_z(init_dist, cells);
+    regular_rectangle(init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells); //initialise square with nx=n_0/2 center will be at (y,x) = (1,1)
 
     // initialise chemical amounts 
     // for (int i = 0; i < n_0; i++) {
@@ -364,15 +452,16 @@ int main(int argc, char const* argv[])
     //         cells.h_X[i].v = 1;
     //     }
     // }
+
     
     // initialise random chemical amounts
     for (int i = 0; i < n_0; i++) {
-        // cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
-        // cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
-        cells.h_X[i].u = 0;
-        cells.h_X[i].v = 0;
+        cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
+        cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
+        // cells.h_X[i].u = 0;
+        // cells.h_X[i].v = 0;
     }
-    cells.h_X[0].u =1;
+    // cells.h_X[0].u =1;
 
     // Initialise properties and k with zeroes
     for (int i = 0; i < n_max; i++) { //initialise with zeroes, for loop step size is set to 1 with i++
@@ -383,6 +472,7 @@ int main(int argc, char const* argv[])
 
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X, Cell* d_dX) { // then set the mechanical forces to zero on the device
         // Set these properties to zero after every timestep so they don't accumulate
+        // Called every timesetep, allows you to add custom forces at every timestep e.g. advection
         thrust::fill(thrust::device, mechanical_strain.d_prop, mechanical_strain.d_prop + cells.get_d_n(), 0.0);
         thrust::fill(thrust::device, ngs_type_A.d_prop, ngs_type_A.d_prop + cells.get_d_n(), 0);
 	    thrust::fill(thrust::device, ngs_type_B.d_prop, ngs_type_B.d_prop + cells.get_d_n(), 0);
