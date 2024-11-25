@@ -6,6 +6,9 @@ import shapely
 import math
 from matplotlib.patches import Polygon
 import matplotlib.pyplot as plt
+from matplotlib import animation
+import copy
+import itertools
 import pandas as pd
 import numpy as np
 import alphashape
@@ -18,6 +21,7 @@ c_prop = "cell_type"
 func = 0
 zoom = 0.6 # define the how far the camera is out
 pt_size = 7
+animate = 2 # 0 = False, 1 = Matplotlib, 2 = Vedo
 
 def render_movie(vtks, folder_path):
 
@@ -187,7 +191,8 @@ def pattern_stats(vtks, folder_path):
             backend="imageio")
 
 
-    plt = Plotter(interactive=False, shape=(1,2), sharecam=False)
+
+    plt = Plotter(interactive=False, shape="1|4", size=(1920,1080), sharecam=False)
     # plt.show(zoom="tight")#,axes=13)
     plt.show(zoom="tight")
     plt.zoom(zoom)
@@ -195,6 +200,7 @@ def pattern_stats(vtks, folder_path):
     frames = []
     a_meshes = []
     p_meshes = []
+    figs = []
     for i, mesh in enumerate(vtks):
         mesh = vtks[i]
         X_spots = mesh.vertices[mesh.pointdata["cell_type"] == 1] # return positions of spot cells
@@ -316,60 +322,142 @@ def pattern_stats(vtks, folder_path):
         plt.at(0).add(p_meshes)
         plt.at(0).add(info)
         plt.at(0).add(tags)
+
+        if animate == 1:    # if matplotlib animation
+            plt.at(1).remove("fig")
+            fig = figs[int(val)]
+            plt.at(1).add(fig)
+            plt.reset_camera(tight=0)
+        
+        if animate == 2:
+            fig1, fig2, fig3, fig4 = figs[int(val)]
+            fig1.name = "fig1"
+            fig2.name = "fig2"
+            fig3.name = "fig3"
+            fig4.name = "fig4"
+            plt.at(1).remove("fig1").add(fig1)
+            plt.at(2).remove("fig2").add(fig2)
+            plt.at(3).remove("fig3").add(fig3)
+            plt.at(4).remove("fig4").add(fig4)
+            
         plt.render()
-    fig = plot_alpha_shape_stats(stats_df)
-    # fig = plot_alpha_shape_stats_vedo(stats_df)
-    fig_ = image.Image(fig)
-    fig_.name="fig"
-    plt.at(1).add(fig_)
-    plt.reset_camera(tight=0)
+    # figs = plot_alpha_shape_stats(stats_df)
+    figs = plot_alpha_shape_stats_vedo(stats_df)
+    fig1, fig2, fig3, fig4 = figs[-1]
+
+    fig1.name = "fig1"
+    fig2.name = "fig2"
+    fig3.name = "fig3"
+    fig4.name = "fig4"
+    # plt.at(1).add(fig)
+    plt.at(1).add(fig1).reset_camera(tight=0)
+    plt.at(2).add(fig2).reset_camera(tight=0)
+    plt.at(3).add(fig3).reset_camera(tight=0)
+    plt.at(4).add(fig4).reset_camera(tight=0)
     # plt.at(1).show(fig, resetcam=True)
     # plt.at(1).reset_camera(tight=0)
     plt.at(0).add_slider(slider1, 0, len(frames)-1, pos=([0.1,0.9],[0.4,0.9]), value=len(frames))
     plt.interactive().close()
 
-
-    
-
     return stats_df
 
 def plot_alpha_shape_stats_vedo(d):
-    print(np.array([d["frame"],d["mean_roundness"]]))
-    print(type(d["frame"]))
-    print(np.array(d["frame"]))
-    fig = pyplot.plot(np.array(d["frame"]),np.array(d["mean_roundness"]))
-    return fig
+    figs = []
+    for i in range(len(d)):
+
+        fig1 = pyplot.plot(np.array(d["frame"]),np.array(d["n_clusters"]),
+        xtitle="i", ytitle="No.clusters")
+        fig1 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+
+
+        fig2 = pyplot.plot(np.array(d["frame"]),np.array(d["n_polygons"]),
+        xtitle="i", ytitle="No. polygons")
+        fig2 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+        
+        fig3 = pyplot.plot(np.array(d["frame"]),np.array(d["mean_area"]),
+        yerrors=np.array(d["std_area"]), error_band=True, ec="grey",
+        xtitle="i", ytitle="Mean area")
+        fig3 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+
+        fig4 = pyplot.plot(np.array(d["frame"]),np.array(d["mean_roundness"]),
+        yerrors=np.array(d["std_roundness"]), error_band=True, ec="grey",
+        xtitle="i", ytitle="Mean roundness")
+        fig4 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+    
+        figs.append((fig1, fig2, fig3, fig4))
+
+    return figs
 
 def plot_alpha_shape_stats(d):
 
-    fig, axs = plt.subplots(nrows=2,ncols=2,figsize=(10,8),dpi=300)
+    figs = []
+    if animate == 1:
+        for i in range(len(d)):
+            fig, axs = plt.subplots(nrows=2,ncols=2,figsize=(10,8),dpi=300)
+            axs = axs.flatten()
 
-    axs = axs.flatten()
+            ax = axs[0]
+            ax.plot(d["frame"], d["n_clusters"])
+            ax.axvline(x=i, c="C1")
+            ax.set_ylabel("No. clusters")
 
-    ax = axs[0]
-    ax.plot(d["frame"], d["n_clusters"])
-    ax.set_ylabel("No. clusters")
+            ax = axs[1]
+            ax.plot(d["frame"], d["n_polygons"])
+            ax.axvline(x=i, c="C1")
+            ax.set_ylabel("No. alpha polygons")
 
-    ax = axs[1]
-    ax.plot(d["frame"], d["n_polygons"])
-    ax.set_ylabel("No. alpha polygons")
+            ax = axs[2]
+            ax.plot(d["frame"], d["mean_area"])
+            ax.fill_between(d["frame"], d["mean_area"] - d["std_area"], d["mean_area"] + d["std_area"], alpha=0.2)
+            ax.axvline(x=i, c="C1")
+            ax.set_ylim(0,None)
+            ax.set_ylabel(r"Mean spot area $\pm$std")
 
-    ax = axs[2]
-    ax.plot(d["frame"], d["mean_area"])
-    ax.fill_between(d["frame"], d["mean_area"] - d["std_area"], d["mean_area"] + d["std_area"], alpha=0.2)
-    ax.set_ylim(0,None)
-    ax.set_ylabel(r"Mean spot area $\pm$std")
+            ax = axs[3]
+            ax.plot(d["frame"], d["mean_roundness"])
+            ax.fill_between(d["frame"], d["mean_roundness"] - d["std_roundness"], d["mean_roundness"] + d["std_roundness"], alpha=0.2)
+            ax.axvline(x=i, c="C1")
+            ax.set_ylim(0,None)
+            ax.set_ylabel(r"Mean spot roundness $(\frac{4\pi \times \text{Area}}{\text{Perimeter}^2})$ $\pm$std")
 
-    ax = axs[3]
-    ax.plot(d["frame"], d["mean_roundness"])
-    ax.fill_between(d["frame"], d["mean_roundness"] - d["std_roundness"], d["mean_roundness"] + d["std_roundness"], alpha=0.2)
-    ax.set_ylim(0,None)
-    ax.set_ylabel(r"Mean spot roundness $(\frac{4\pi \times \text{Area}}{\text{Perimeter}^2})$ $\pm$std")
+            fig.supxlabel("Frame no.")
+            fig.tight_layout()
+            figs.append(fig)
+            plt.close(fig)
+        
+        for i, fig in enumerate(figs):
+            figs[i] = image.Image(fig) # turn in into image
 
-    fig.supxlabel("Frame no.")
-    fig.tight_layout()
+    else:
+        fig, axs = plt.subplots(nrows=2,ncols=2,figsize=(10,8),dpi=300)
+        axs = axs.flatten()
+        
+        ax = axs[0]
+        ax.plot(d["frame"], d["n_clusters"])
+        ax.set_ylabel("No. clusters")
+
+        ax = axs[1]
+        ax.plot(d["frame"], d["n_polygons"])
+        ax.set_ylabel("No. alpha polygons")
+
+        ax = axs[2]
+        ax.plot(d["frame"], d["mean_area"])
+        ax.fill_between(d["frame"], d["mean_area"] - d["std_area"], d["mean_area"] + d["std_area"], alpha=0.2)
+        ax.set_ylim(0,None)
+        ax.set_ylabel(r"Mean spot area $\pm$std")
+
+        ax = axs[3]
+        ax.plot(d["frame"], d["mean_roundness"])
+        ax.fill_between(d["frame"], d["mean_roundness"] - d["std_roundness"], d["mean_roundness"] + d["std_roundness"], alpha=0.2)
+        ax.set_ylim(0,None)
+        ax.set_ylabel(r"Mean spot roundness $(\frac{4\pi \times \text{Area}}{\text{Perimeter}^2})$ $\pm$std")
+
+        fig.supxlabel("Frame no.")
+        fig.tight_layout()
+        figs = image.Image(fig) # turn into image
     # plt.show()
-    return fig
+
+    return figs
 
 
 def plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes):
