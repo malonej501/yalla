@@ -1,5 +1,6 @@
 #!/bin/bash
 
+cd /mnt/users/jmalone/GitHub/yalla/run
 rm exec*
 rm output/*
 module load cuda
