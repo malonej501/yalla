@@ -455,3 +455,62 @@ void regular_rectangle(
         i++;
     }
 }
+
+template<typename Pt, template<typename> class Solver>
+void regular_rectangle_w_spot(
+    int sp_size, float dist_to_nb, int nx, Solution<Pt, Solver>& points, unsigned int n_0 = 0)
+{   // sp_size gives the number of cells in the initial iridophore aggregation
+    assert(n_0 < *points.h_n);
+
+    auto cell_counter = n_0;
+    int nrows = 0;
+    if (cell_counter == *points.h_n) {
+        points.copy_to_device();
+        return;
+    }
+    // initialise rectangle
+    auto i = 0;
+    auto full = false;
+    while (!full) { // exit while loop when the rectangle is full
+        float py =  i * sqrt(pow(dist_to_nb, 2) - pow(dist_to_nb/2.f, 2));
+        float row_offset = 0.0;
+        if(i%2 != 0)
+            row_offset = dist_to_nb/2.f;
+        for (auto j = 0; j < nx; j++) {
+            points.h_X[cell_counter].x = row_offset + j * dist_to_nb;
+            points.h_X[cell_counter].y = py;
+            points.h_X[cell_counter].z = 0.0f;
+            cell_counter++;
+            if (cell_counter == *points.h_n - sp_size) {
+                full = true;
+                nrows = i + 1; //save the number of rows in the rectangle
+                // printf("i: %d\n", i);
+                // printf("nrows: %d\n", nrows);
+                break;
+            }
+        }
+        i++;
+    }
+    // add spot cells at the far left of the rectangle, column by column
+    auto j = 0;
+    full = false;
+    while (!full) {
+        for (auto i = 0; i < nrows; i++) {
+
+            float row_offset = (i%2 != 0) ? 0 : dist_to_nb / 2.f; // offset to place spot cells between non-spot cells
+            float px = row_offset + j * dist_to_nb;
+            float py = i * sqrt(pow(dist_to_nb, 2) - pow(dist_to_nb / 2.f, 2));
+            points.h_X[cell_counter].x = px;
+            points.h_X[cell_counter].y = py;
+            points.h_X[cell_counter].z = 0.0f;
+            cell_counter++;
+            if (cell_counter == *points.h_n) {
+                full = true;
+                break;
+            }
+        }
+        j++;
+    }
+    points.copy_to_device();
+}
+

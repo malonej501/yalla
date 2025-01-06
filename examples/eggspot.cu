@@ -17,7 +17,7 @@
 // global simulation parameters
 const float r_max = 0.1;                        // Max distance betwen two cells for which they will interact - set to upper bound of donut
 const int n_max = 200000;                       // Max number of cells
-const float noise = 0.015;//0.01;//0.005;                        // Magnitude of noise returned by generate_noise - 0.01 is reasonable
+const float noise = 0; //0.01;//0.015;//0.005;                        // Magnitude of noise returned by generate_noise - 0.01 is reasonable
 const int cont_time = 1000;                    // Simulation duration in arbitrary time units 1 = 1 day
 const float dt = 0.1;                           // Time step for Euler integration
 const int no_frames = 100;                      // no. frames of simulation output to vtk - divide the simulation time by this number
@@ -26,7 +26,7 @@ const int no_frames = 100;                      // no. frames of simulation outp
 const float init_dist = 0.05;//0.082;                    // mean distance between cells when initialised 
 const float div_dist = 0.01;
 const int n_0 = 1000;//450;//500;//350;                            // Initial number of cells n.b. this number needs to divide properly between stripes if using volk initial condition
-const float A_init = 0;                         // % of the initial cell population that will be type 1 / A
+const int A_init = 10;                         // % of the initial cell population that will be type 1 / A
 
 // cell migration parameters
 const bool diff_adh_rep = true;                // set to false to turn off differential adhesion and repulsion
@@ -34,6 +34,7 @@ const float rii = 0.012;                         // Length scales for migration 
 const float Rii = 0.0045;                      // Repulsion from iri to iri (mm^2/day)
 const float aii = 0.019;
 const float Aii = 0.0019;
+const bool adv = true;                        // set to true to turn on advection
 
 // proliferation parameters
 const float A_div = 0.012;                      // 0.02 works well if you have the overcrowding condition
@@ -73,6 +74,13 @@ const float D_v = 0.01;
 // const float s5 = 3.1;
 // const float s6 = 3.9;
 // const float s7 = 4.1;
+
+// const float fin_rays[4][2] = {
+//     {0.9, 1.1},
+//     {1.9, 2.1},
+//     {2.9, 3.1},
+//     {3.9, 4.1}
+// };
 
 
 
@@ -158,9 +166,9 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // Yalla compute the new values by multiplying d_dX[i] by dt and adding to the values in the current time step
     // This function is in solvers in the euler_step function
 
-    // migration
-    dF.x -= 0.001; // migration in X
-
+    // advection
+    // if (adv) dF.x -= 0.001; // migration in X only if adv switched on
+    if (adv and d_cell_type[i] == 1) dF.x += 0.001; // migration in X only if adv switched on and cell type is 1
     return dF;
 }
 
@@ -298,16 +306,26 @@ int main(int argc, char const* argv[])
     Property<int> cell_type{n_max, "cell_type"};
     cudaMemcpyToSymbol(d_cell_type, &cell_type.d_prop, sizeof(d_cell_type));
 
-    for (int i =0; i < n_0; i++) {
-        cell_type.h_prop[i] = (std::rand() % 100 < A_init) ?  1 : 2; //randomly assign a proportion of initial cells with each type
-    }
+    // for (int i =0; i < n_0; i++) {
+    //     cell_type.h_prop[i] = (std::rand() % 100 < A_init) ?  1 : 2; //randomly assign a proportion of initial cells with each type
+    // }
 
     // Initial conditions
     Solution<Cell, Gabriel_solver> cells{n_max, 50, r_max};
     *cells.h_n = n_0;
-    random_disk_z(init_dist, cells);
+    // random_disk_z(init_dist, cells);
     // regular_rectangle(init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells); 
+    // rectangle with spots on one end
+    auto sp_size = (A_init / 100.0) * n_0; // calculate no. cells in spot
+    regular_rectangle_w_spot(sp_size, init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells);
+    for (int i =0; i < n_0; i++) {
+        cell_type.h_prop[i] = (i < n_0 - sp_size) ? 2 : 1; // set cell type to 1 for spot cells, and 2 for all others
+    }
     //initialise square with nx=n_0/2 center will be at (y,x) = (1,1)
+
+    // for (int i =0; i < n_0; i++) {
+    //     cell_type.h_prop[i] = (cells.h_X[i].x < 0.5) ?  1 : 2; //randomly assign a proportion of initial cells with each type
+    // }
 
     // initialise random chemical amounts
     for (int i = 0; i < n_0; i++) {
@@ -332,7 +350,7 @@ int main(int argc, char const* argv[])
 	    thrust::fill(thrust::device, ngs_type_B.d_prop, ngs_type_B.d_prop + cells.get_d_n(), 0);
 
         // return wall_forces<Cell, boundary_force>(n, d_X, d_dX, 0);
-        return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX, 0);//, num_walls, wall_normals, wall_offsets);
+        // return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX, 0);//, num_walls, wall_normals, wall_offsets);
     };
 
     cells.copy_to_device();
@@ -377,7 +395,7 @@ int main(int argc, char const* argv[])
     // Main simulation loop
     for (int time_step = 0; time_step <= cont_time; time_step ++) {
         for (float T = 0.0; T < 1.0; T+=dt) {
-            //generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
+            generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
             // proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
             cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);
         }

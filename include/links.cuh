@@ -275,12 +275,12 @@ __device__ void boundary_forces_mult(const Pt* __restrict__ d_X, const int i,
         {1, 0, 0},  // plane at x=off  
         {0, 1, 0},  // plane at y=off
         {0, -1, 0}, // plane at y=-off
-        {-1, -1, 0} // plane at y=-x
+        {-1, -1, 0} // plane at y + x = off
     };
 
     // Wall offsets are D
-    float w_off[] = { 0.5f, 1.1f, 0.5f, 0.5f , 0.5f};  // Offsets for each wall, order same as w_norms
-    float w_off_s = 3;                            // Scaling factor for the wall offsets
+    float w_off[] = { 0.25f, 1.0f, 0.25f, 0.75f , 0.5f};  // Offsets for each wall, order same as w_norms
+    float w_off_s = 4;                            // Scaling factor for the wall offsets
     int num_walls = 5;                            // Number of walls
     float w_fmax = 0.5;                              // Maximum force from wall
     float w_thresh = 0.5;                            // Threshold distance for applying force
