@@ -5,46 +5,61 @@
 // $ nvcc -std=c++14 -arch=sm_86 {"compiler flags"} Limb_model_simulation.cu
 // The values for "-std" and "-arch" flags will depend on your version of CUDA and the specific GPU model you have respectively.
 // e.g. -std=c++14 works for CUDA version 11.6 and -arch=sm_86 corresponds to the generation of NVIDIA Geforce 30XX cards.
+#include <thrust/execution_policy.h>
+#include <thrust/remove.h>
+#include <iterator>
+
 #include "../include/solvers.cuh"
 #include "../include/dtypes.cuh"
 #include "../include/inits.cuh"  
 #include "../include/property.cuh"
 #include "../include/utils.cuh"
 #include "../include/vtk.cuh"
+#include "../include/mesh.cuh"
+
 
 // N.B. distances are in millimeters so 0.001 = 1 micrometer
 
 // global simulation parameters
 const float r_max = 0.1;                        // Max distance betwen two cells for which they will interact - set to upper bound of donut
 const int n_max = 200000;                       // Max number of cells
-const float noise = 0; //0.01;//0.015;//0.005;                        // Magnitude of noise returned by generate_noise - 0.01 is reasonable
-const int cont_time = 1000;                    // Simulation duration in arbitrary time units 1 = 1 day
+const float noise = 0; //0.01;//0.015;//0.005;  // Magnitude of noise returned by generate_noise - 0.01 is reasonable
+const int cont_time = 1000;                     // Simulation duration in arbitrary time units 1 = 1 day
 const float dt = 0.1;                           // Time step for Euler integration
 const int no_frames = 100;                      // no. frames of simulation output to vtk - divide the simulation time by this number
 
 // tissue initialisation
-const float init_dist = 0.05;//0.082;                    // mean distance between cells when initialised 
+const int mode = 3;                             // condition for initialisation of cells 0-random disk, 1-regular rectangle, 2-regular rectangle with spot
+const float init_dist = 0.05;//0.082;           // mean distance between cells when initialised 
 const float div_dist = 0.01;
-const int n_0 = 1000;//450;//500;//350;                            // Initial number of cells n.b. this number needs to divide properly between stripes if using volk initial condition
-const int A_init = 10;                         // % of the initial cell population that will be type 1 / A
+const int n_0 = 10000;//450;//500;//350;         // Initial number of cells n.b. this number needs to divide properly between stripes if using volk initial condition
+const int A_init = 30; //10;                          // % of the initial cell population that will be type 1 / A
+const bool fin_walls = false;                   // set to true to restrict cells to the fin shape with force walls
+const bool fin_rays = false;                    // set to true to alter advection strength between fin rays
+const char* vtk_file = "../inits/out_101.vtk";               // file name for vtk file to read in
 
 // cell migration parameters
-const bool diff_adh_rep = true;                // set to false to turn off differential adhesion and repulsion
-const float rii = 0.012;                         // Length scales for migration forces for iri-iri (in mm)
-const float Rii = 0.0045;                      // Repulsion from iri to iri (mm^2/day)
+const bool diff_adh_rep = true;                 // set to false to turn off differential adhesion and repulsion
+const float rii = 0.012;                        // Length scales for migration forces for iri-iri (in mm)
+const float Rii = 0.0045;                       // Repulsion from iri to iri (mm^2/day)
 const float aii = 0.019;
 const float Aii = 0.0019;
-const bool adv = true;                        // set to true to turn on advection
+
+// advection parameters
+const bool adv = false;                          // set to true to turn on advection
+const float ad_s = 0.001;                       // default advection strength
+const float soft_ad_s = 0; //0.0003;                 // advection strength when between fin rays
 
 // proliferation parameters
-const float A_div = 0.012;                      // 0.02 works well if you have the overcrowding condition
-const float B_div = 0.012;                   
-const float r_A_birth = 0.02;                   // for mutual inhibition              
-// const float r_A_birth = 0.008;                   //chance of iridophore birth from background cell
-// const float r_A_birth = 0.000008;                   //chance of iridophore birth from background cell
-const float uthresh = 0.015;                      // B cells will not change to A if the amount of u exceeds this value
+const bool prolif = false;                       // set to true to turn on proliferation
+const float A_div = 0.006;//0.012;                      // 0.02 works well if you have the overcrowding condition
+const float B_div = 0.006;//0.012;                   
+const float r_A_birth = 0;//0.02;                   // for mutual inhibition              
+// const float r_A_birth = 0.008;               //chance of iridophore birth from background cell
+// const float r_A_birth = 0.000008;            //chance of iridophore birth from background cell
+const float uthresh = 0.015;                    // B cells will not change to A if the amount of u exceeds this value
 const float mech_thresh = 0.05;                 //for mutual inhibition
-// const float mech_thresh = 0.03;                 // if the mechanical strain on a cell exceeds this value, don't divide
+// const float mech_thresh = 0.03;              // if the mechanical strain on a cell exceeds this value, don't divide
 
 // chemical diffusion rates - this is Fick's first law?
 // for mutual inhibition
@@ -74,16 +89,6 @@ const float D_v = 0.01;
 // const float s5 = 3.1;
 // const float s6 = 3.9;
 // const float s7 = 4.1;
-
-// const float fin_rays[4][2] = {
-//     {0.9, 1.1},
-//     {1.9, 2.1},
-//     {2.9, 3.1},
-//     {3.9, 4.1}
-// };
-
-
-
 
 // Macro that builds the cell variable type - instead of type float3 we are making a instance of Cell with attributes x,y,z,u,v where u and v are diffusible chemicals
 //MAKE_PT(Cell); // float3 i .x .y .z .u .v .whatever
@@ -168,7 +173,28 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
     // advection
     // if (adv) dF.x -= 0.001; // migration in X only if adv switched on
-    if (adv and d_cell_type[i] == 1) dF.x += 0.001; // migration in X only if adv switched on and cell type is 1
+    // Advection
+    float rays[4][2] = {
+        {0.1, 0.3},
+        {0.4, 0.6},
+        {0.7, 0.9},
+        {1.0, 1.2},
+    };
+
+    if (adv and d_cell_type[i] == 1) {
+        float ad = ad_s; // default advection strength
+
+        if (fin_rays) {        
+            for (int k = 0; k < 4; ++k) { // Check if the cell is within any of the fin_rays ranges
+                if (Xi.x >= rays[k][0] and Xi.x <= rays[k][1]) {
+                    ad = soft_ad_s; // change advection amount if within range
+                    break;
+                }
+            }
+        }
+
+        dF.x += ad; // apply advection
+    }
     return dF;
 }
 
@@ -218,9 +244,9 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
     
     // set child cell types    
     if (d_cell_type[i] == 2) {
-        d_cell_type[n] = (curand_uniform(&d_state[i]) < r_A_birth and d_X[i].u < uthresh) ? 1 : 2; // sometimes cell type 2 produces cell type 1 random birth of cell type 1 is inhibited by chemical u
+        // d_cell_type[n] = (curand_uniform(&d_state[i]) < r_A_birth and d_X[i].u < uthresh) ? 1 : 2; // sometimes cell type 2 produces cell type 1 random birth of cell type 1 is inhibited by chemical u
         // d_cell_type[n] = (curand_uniform(&d_state[i]) < r_A_birth) ? 1 : 2; // sometimes cell type 2 produces cell type 1 random birth of cell type 1 is inhibited by chemical u
-        // d_cell_type[n] = 2;
+        d_cell_type[n] = 2;
     }
     if (d_cell_type[i] == 1) {
         d_cell_type[n] = 1;
@@ -239,6 +265,33 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X, floa
  
 }
 
+__global__ void find_min_max_x(const Cell* d_cells, int num_cells, float* d_min_x, float* d_max_x) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_cells) return;
+    // I think there is a method to do this for objects of type Mesh - like .get_minimum()
+
+    __shared__ float shared_min_x[256];
+    __shared__ float shared_max_x[256];
+
+    shared_min_x[threadIdx.x] = d_cells[idx].x;
+    shared_max_x[threadIdx.x] = d_cells[idx].x;
+
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            shared_min_x[threadIdx.x] = fminf(shared_min_x[threadIdx.x], shared_min_x[threadIdx.x + stride]);
+            shared_max_x[threadIdx.x] = fmaxf(shared_max_x[threadIdx.x], shared_max_x[threadIdx.x + stride]);
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        atomicMin((int*)d_min_x, __float_as_int(shared_min_x[0]));
+        atomicMax((int*)d_max_x, __float_as_int(shared_max_x[0]));
+    }
+}
+
 int main(int argc, char const* argv[])
 {
 
@@ -254,10 +307,13 @@ int main(int argc, char const* argv[])
     std::cout << "no_frames = " << no_frames << "\n\n";
 
     std::cout << "Tissue Initialization:\n";
+    std::cout << "mode = " << mode << "\n";
     std::cout << "init_dist = " << init_dist << "\n";
     std::cout << "div_dist = " << div_dist << "\n";
     std::cout << "n_0 = " << n_0 << "\n";
-    std::cout << "A_init = " << A_init << "\n\n";
+    std::cout << "A_init = " << A_init << "\n";
+    std::cout << "fin_walls = " << (fin_walls ? "true" : "false") << "\n";
+    std::cout << "fin_rays = " << (fin_rays ? "true" : "false") << "\n\n";
 
     std::cout << "Cell Migration Parameters:\n";
     std::cout << "diff_adh_rep = " << (diff_adh_rep ? "true" : "false") << "\n";
@@ -266,7 +322,13 @@ int main(int argc, char const* argv[])
     std::cout << "aii = " << aii << "\n";
     std::cout << "Aii = " << Aii << "\n\n";
 
+    std::cout << "Advection Parameters:\n";
+    std::cout << "adv = " << (adv ? "true" : "false") << "\n";
+    std::cout << "ad_s = " << ad_s << "\n";
+    std::cout << "soft_ad_s = " << soft_ad_s << "\n\n";
+
     std::cout << "Proliferation Parameters:\n";
+    std::cout << "prolif = " << (prolif ? "true" : "false") << "\n";
     std::cout << "A_div = " << A_div << "\n";
     std::cout << "B_div = " << B_div << "\n";
     std::cout << "r_A_birth = " << r_A_birth << "\n";
@@ -306,26 +368,47 @@ int main(int argc, char const* argv[])
     Property<int> cell_type{n_max, "cell_type"};
     cudaMemcpyToSymbol(d_cell_type, &cell_type.d_prop, sizeof(d_cell_type));
 
-    // for (int i =0; i < n_0; i++) {
-    //     cell_type.h_prop[i] = (std::rand() % 100 < A_init) ?  1 : 2; //randomly assign a proportion of initial cells with each type
-    // }
-
     // Initial conditions
     Solution<Cell, Gabriel_solver> cells{n_max, 50, r_max};
     *cells.h_n = n_0;
-    // random_disk_z(init_dist, cells);
-    // regular_rectangle(init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells); 
-    // rectangle with spots on one end
-    auto sp_size = (A_init / 100.0) * n_0; // calculate no. cells in spot
-    regular_rectangle_w_spot(sp_size, init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells);
-    for (int i =0; i < n_0; i++) {
-        cell_type.h_prop[i] = (i < n_0 - sp_size) ? 2 : 1; // set cell type to 1 for spot cells, and 2 for all others
-    }
-    //initialise square with nx=n_0/2 center will be at (y,x) = (1,1)
 
-    // for (int i =0; i < n_0; i++) {
-    //     cell_type.h_prop[i] = (cells.h_X[i].x < 0.5) ?  1 : 2; //randomly assign a proportion of initial cells with each type
-    // }
+    if (mode == 0) {
+        random_disk_z(init_dist, cells); // initialise random disk with mean distance between cells of init_dist
+        for (int i =0; i < n_0; i++) {
+            cell_type.h_prop[i] = (std::rand() % 100 < A_init) ?  1 : 2; //randomly assign a proportion of initial cells with each type
+        }
+    }
+    if (mode == 1) {
+        regular_rectangle(init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells); // initialise rectangle specifying the no. cells along the x axis
+        for (int i =0; i < n_0; i++) {
+            cell_type.h_prop[i] = (std::rand() % 100 < A_init) ?  1 : 2; 
+        }
+    }
+    if (mode == 2) { // rectangle with spots on one end
+        auto sp_size = (A_init / 100.0) * n_0; // calculate no. cells in spot
+        regular_rectangle_w_spot(sp_size, init_dist, std::round(std::sqrt(n_0) / 10) * 10, cells);
+        for (int i =0; i < n_0; i++) {
+            cell_type.h_prop[i] = (i < n_0 - sp_size) ? 2 : 1; // set cell type to 1 for spot cells, and 2 for all others
+        }
+        
+    }
+    if (mode == 3) { // cut the fin mesh out of a random cloud of cells
+        Mesh fin{"../inits/fin_mesh_3D.vtk"};
+        fin.rescale(3); // expand the mesh to fit to the boundaries
+        random_rectangle(init_dist, fin.get_minimum(), fin.get_maximum(), cells);
+        auto new_n =
+            thrust::remove_if(thrust::host, cells.h_X, cells.h_X + *cells.h_n,
+                [&fin](Cell x) {
+                    return fin.test_exclusion(x);
+                });
+        *cells.h_n = std::distance(cells.h_X, new_n);
+        for (int i =0; i < n_0; i++) { // set cell types
+            cell_type.h_prop[i] = (std::rand() % 100 < A_init) ?  1 : 2; // set cell type to 1 for spot cells, and 2 for all others
+        }
+    }
+
+
+
 
     // initialise random chemical amounts
     for (int i = 0; i < n_0; i++) {
@@ -350,7 +433,7 @@ int main(int argc, char const* argv[])
 	    thrust::fill(thrust::device, ngs_type_B.d_prop, ngs_type_B.d_prop + cells.get_d_n(), 0);
 
         // return wall_forces<Cell, boundary_force>(n, d_X, d_dX, 0);
-        // return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX, 0);//, num_walls, wall_normals, wall_offsets);
+        if (fin_walls) return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX, 0);//, num_walls, wall_normals, wall_offsets);
     };
 
     cells.copy_to_device();
@@ -361,7 +444,7 @@ int main(int argc, char const* argv[])
     // d_wall_normals.copy_to_device();
     // d_wall_offsets.copy_to_device();
         
-    Vtk_output output{"out"};
+    Vtk_output output{"out"}; // create instance of Vtk_output class
 
 
 
@@ -396,7 +479,7 @@ int main(int argc, char const* argv[])
     for (int time_step = 0; time_step <= cont_time; time_step ++) {
         for (float T = 0.0; T < 1.0; T+=dt) {
             generate_noise<<<(cells.get_d_n() + 32 - 1)/32, 32>>>(cells.get_d_n(), d_state); // generate random noise which we will use later on to move the cells
-            // proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
+            if (prolif) proliferation<<<(cells.get_d_n() + 128 - 1)/128, 128>>>(cells.get_d_n(), d_state, cells.d_X, cells.d_old_v, cells.d_n); // simulate proliferation
             cells.take_step<pairwise_force, friction_on_background>(dt, generic_function);
         }
 
