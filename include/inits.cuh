@@ -6,7 +6,6 @@
 #include <iostream>
 #include <random>
 
-
 template<typename Pt, template<typename> class Solver>
 class Solution;
 
@@ -510,6 +509,30 @@ void regular_rectangle_w_spot(
             }
         }
         j++;
+    }
+    points.copy_to_device();
+}
+
+template<typename Pt, template<typename> class Solver>
+void random_rectangle(float dist_to_nb, float3 minimum, float3 maximum,
+    Solution<Pt, Solver>& points, unsigned int n_0 = 0)
+{
+    assert(n_0 < *points.h_n);
+
+    auto dimension = maximum - minimum;
+    auto rectangle_area = dimension.x * dimension.y;
+    auto circle_area = M_PI * pow(dist_to_nb / 2, 2);
+    auto n = rectangle_area / circle_area * 0.64;  // Circle packing
+
+    assert(n_0 + n < *points.h_n);
+    *points.h_n = n_0 + n;
+
+    std::random_device rd;
+    srand(rd());
+    for (auto i = n_0; i < *points.h_n; i++) {
+        points.h_X[i].x = minimum.x + dimension.x * (rand() / (RAND_MAX + 1.0));
+        points.h_X[i].y = minimum.y + dimension.y * (rand() / (RAND_MAX + 1.0));
+        points.h_X[i].z = 0.0f;  // Set z to 0 for 2D
     }
     points.copy_to_device();
 }
