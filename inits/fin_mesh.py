@@ -1,7 +1,7 @@
 import sys
 from vedo import *
 
-display = True
+display = False
 extrude = True
 extrude_z = 0.1 # extrude distance in z direction
 format = 0 # 0: legacy vtk, 1: new vtk (from vedo)
@@ -15,7 +15,7 @@ def export_vtk_custom(verts, faces):
     """Export verts and faces manually to legacy vtk"""
 
     # Create the vtk file
-    vtk_file = open("fin_mesh.vtk", "w")
+    vtk_file = open("fin_mesh_3D.vtk" if extrude else "fin_mesh_2D.vtk", "w")
 
     # Write the header
     vtk_file.write("# vtk DataFile Version 3.0\n")
@@ -79,7 +79,7 @@ if __name__ == "__main__":
         show(f_mesh, axes=1) 
 
     if format == 0:
-        export_vtk_custom(f_mesh.points(), f_mesh.faces())
+        export_vtk_custom(f_mesh.vertices, f_mesh.cells)
     elif format == 1:
         f_mesh.write("fin_mesh.vtk", binary=False)
 
