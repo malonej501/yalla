@@ -1,18 +1,12 @@
 from vedo import *
-import imageio
-import os
 import sys
 import shapely
 import math
 from matplotlib.patches import Polygon
 import matplotlib.pyplot as plt
-from matplotlib import animation
-import copy
-import itertools
 import pandas as pd
 import numpy as np
 import alphashape
-from sklearn import metrics
 from sklearn.cluster import DBSCAN
 
 # Default parameters
@@ -31,7 +25,7 @@ eps = 0.05 # maximum distance between two samples for one to be considered as in
 
 def render_movie(vtks, folder_path):
 
-    """Choose cell property to colourise - e.g. cell_type, u, mechanical_strain"""
+    """Renders movie of growing tissue with one cell property colourised e.g. cell_type, u, mech_str"""
 
     print(f"Rendering: {folder_path}")
     
@@ -74,12 +68,9 @@ def render_movie(vtks, folder_path):
         info.name = "info"
         frames.append((points, bar, info))
         # Add the mesh to the plotter
-        plt.remove("cells")
-        plt.remove("bar")
-        plt.remove("info")
-        plt.add(points)
-        plt.add(info)
-        plt.add(bar)
+        plt.remove("cells").add(points)
+        plt.remove("bar").add(bar)
+        plt.remove("info").add(info)
        
         plt.render()#.reset_camera()
         if export:
@@ -90,44 +81,38 @@ def render_movie(vtks, folder_path):
 
     def slider1(widget, event):
         val = widget.value # get the slider current value
-
-        plt.remove("cells")
-        plt.remove("bar")
-        plt.remove("info")
-
         points, bar, info = frames[int(val)]
 
-        plt.add(points)
-        plt.add(bar)
-        plt.add(info)
+        plt.remove("cells").add(points)
+        plt.remove("bar").add(bar)
+        plt.remove("info").add(info)
+
         plt.render()
 
     def slider2(widget, event):
-        val = int(widget.value)
-        c_prop = points.pointdata.keys()[val]
-
-        plt.remove("bar") # remove the old bar
-
-        points.cmap(cmap, c_prop) # change the cmap of the current view
-        bar = addons.ScalarBar(points, title=c_prop) # create the new bar
+        val = int(widget.value) # get slider value
+        c_prop = points.pointdata.keys()[val] # return new cmap from slider
+        
+        # change the cmap for and bar to the current frame
+        points.cmap(cmap, c_prop) 
+        bar = addons.ScalarBar(points, title=c_prop)
         bar.name = "bar"
-     
-        # change the cmap of all frames
+        plt.remove("bar").add(bar) 
+        plt.render()
+
+        # change the cmap for and add bar to all frames
         for k, (pts, br, info) in enumerate(frames):
             pts = pts.cmap(cmap, c_prop)
-            br = addons.ScalarBar(pts, title=c_prop)
-            br.name = "bar"
+            br = bar
             frames[k] = (pts, br, info)
-    
-        plt.add(bar)
-        plt.render()
 
     plt.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
     plt.add_slider(slider2, 0, len(points.pointdata.keys())-1, pos="top-left", value=points.pointdata.keys().index(c_prop))
-    plt.interactive().close()
-    plt.clear()
+    plt.interactive()
 
 def show_chem_grad(folder_path):
+
+    """Plot chemical amount along x axis of tissue for several timepoints"""
     pts = load_vtks(folder_path)
 
     n_t = 10
@@ -164,6 +149,8 @@ def show_chem_grad(folder_path):
 
 def tissue_stats(vtks):
 
+    """Return basic tissue stats for each vtk file e.g. tissue xmin and xmax, no. each cell type etc."""
+
     stats = []
     for pt in vtks:
         #print(pt.vertices[:10])
@@ -188,8 +175,9 @@ def tissue_stats(vtks):
     print(stats_df)
 
 def pattern_stats(vtks, folder_path):
-    
+
     """Cluster spot cells and infer alpha shapes and shape stats"""
+
     stats = []
     frames = []
     print(f"Clustering and alpha shapes analysis: {folder_path}")
@@ -286,7 +274,8 @@ def pattern_stats(vtks, folder_path):
             "std_roundness": np.std(roundnesses)
         })
     stats_df = pd.DataFrame(stats)
-    print("\nClustering and alpha shapes analysis complete.")  
+    print("\nClustering and alpha shapes analysis complete.")
+    print(stats_df)  
  
     # plot the statistics over the simulation timeseries
     print("Generating shape statistics plots...")
@@ -355,10 +344,10 @@ def pattern_stats(vtks, folder_path):
     return stats_df
 
 def plot_alpha_shape_stats_vedo(d):
-    """Plot the spot shape statistics over simulation timecourse from dataframe of statistics"""
+
+    """Plot the spot shape statistics over simulation timecourse from dataframe of statistics using vedo"""
+    
     figs = []
-    print(d)
-    # d.fillna(0, inplace=True)
     for i in range(len(d)):
         
         fig1 = pyplot.plot(np.array(d["frame"]),np.array(d["n_clusters"]),
@@ -388,6 +377,8 @@ def plot_alpha_shape_stats_vedo(d):
     return figs
 
 def plot_alpha_shape_stats(d):
+
+    """Plot the spot shape statistics over simulation timecourse from dataframe of statistics using matplotlib"""
 
     figs = []
     if animate == 1:
