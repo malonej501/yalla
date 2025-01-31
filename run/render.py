@@ -15,13 +15,19 @@ import alphashape
 from sklearn import metrics
 from sklearn.cluster import DBSCAN
 
- # set default parameters
-export = False
-c_prop = "cell_type"
-func = 0
+# Default parameters
+
+# Visualisation
+export = False # export the rendering to video file
+c_prop = "cell_type" # cell property to colourise
+func = 0 # by default render movie
 zoom = 0.6 # define the how far the camera is out
-pt_size = 7
+pt_size = 12 # how large the cells are drawn
 animate = 2 # 0 = False, 1 = Matplotlib, 2 = Vedo
+ax = True # show axes
+
+# DBSCAN parameters
+eps = 0.05 # maximum distance between two samples for one to be considered as in the neighborhood of the other
 
 def render_movie(vtks, folder_path):
 
@@ -38,7 +44,7 @@ def render_movie(vtks, folder_path):
     plt = Plotter(interactive=False)
     # ax = addons.Axes(plt, xrange=(lims[0][0],lims[0][1]), yrange=(lims[1][0],lims[1][1]), zrange=(0,0))
     # ax.name = "ax"
-    plt.show(zoom="tight")#zoom="tight")#,axes=ax)#, axes=13)
+    plt.show(zoom="tight", axes=1 if ax == True else 0) #zoom="tight")#,axes=ax)#, axes=13)
     plt.zoom(zoom)
 
     if export:
@@ -182,32 +188,20 @@ def tissue_stats(vtks):
     print(stats_df)
 
 def pattern_stats(vtks, folder_path):
-
-    video_length=10
-    if export:
-        v = Video(
-            name=f"{folder_path.split('/')[-1]}_{c_prop}_f1.mp4", 
-            duration=video_length, 
-            backend="imageio")
-
-
-
-    plt = Plotter(interactive=False, shape="1|4", size=(1920,1080), sharecam=False)
-    # plt.show(zoom="tight")#,axes=13)
-    plt.show(zoom="tight")
-    plt.zoom(zoom)
+    
+    """Cluster spot cells and infer alpha shapes and shape stats"""
     stats = []
     frames = []
-    a_meshes = []
-    p_meshes = []
-    figs = []
+    print(f"Clustering and alpha shapes analysis: {folder_path}")
     for i, mesh in enumerate(vtks):
+        sys.stdout.write(f"\rFrame: {i}")
+        sys.stdout.flush()
         mesh = vtks[i]
         X_spots = mesh.vertices[mesh.pointdata["cell_type"] == 1] # return positions of spot cells
         if X_spots.size == 0: # skip the iteration if there are no spot cells present in the vtk
             continue
         # eps - maximum distance between two samples for one to be considered as in the neighborhood of the other - set to equilibrium distance between spot cells - check force potential
-        db = DBSCAN(eps=0.05, min_samples=1).fit(X_spots)
+        db = DBSCAN(eps=eps, min_samples=1).fit(X_spots)
         labels = db.labels_
 
         # Number of clusters in labels, ignoring noise if present.
@@ -225,8 +219,8 @@ def pattern_stats(vtks, folder_path):
         roundnesses = [] # roundness is only computed for polygons - not lines, points etc.
         n_poly = 0
         tags = []
-        a_meshes = []
-        p_meshes = []
+        a_meshes = [] # the alpha shapes
+        p_meshes = [] # the spot cell points
         # return the coordinates of the cells in each cluster
         for l in unique_labels:
             class_member_mask = labels == l
@@ -248,7 +242,7 @@ def pattern_stats(vtks, folder_path):
                 cells = np.array([range(len(a_shape_np))])
 
                 a_mesh = Mesh([a_shape_np,cells])
-                a_mesh_ids = a_mesh.labels(content=np.array([l]), on="cells",yrot=180)
+                a_mesh_ids = a_mesh.labels(content=np.array([l]), on="cells",yrot=180) # only display label if polygon
                 a_mesh_ids.name = "tag"
                 tags.append(a_mesh_ids)
                 a_mesh.color(l).alpha(0.2)
@@ -258,6 +252,15 @@ def pattern_stats(vtks, folder_path):
 
                 perimeter = shapely.length(alpha_shape)
                 roundnesses.append((4 * math.pi * alpha_shape.area) / (perimeter**2)) # 1 for perfect circle, 0 for non-circular
+            if alpha_shape.geom_type == "LineString": 
+                a_meshes.append(None)
+                tags.append(None)
+                roundnesses.append(0) # if line roundness is 0
+            if alpha_shape.geom_type == "Point": 
+                a_meshes.append(None)
+                tags.append(None)
+                roundnesses.append(1) # if point roundness is 1
+                
         info = Text2D(
             txt=(f"i: {i}\n"
             f"n_clusters: {len(unique_labels)}\n"
@@ -269,18 +272,7 @@ def pattern_stats(vtks, folder_path):
             pos="bottom-left")
         info.name = "info"
 
-        plt.remove("a_mesh")
-        plt.remove("p_mesh")
-        plt.remove("info")
-        plt.remove("tag")
         frames.append((a_meshes,p_meshes,info,tags))
-        plt.add(a_meshes)
-        plt.add(p_meshes)
-        plt.add(info)
-        plt.add(tags)
-        plt.render()#.reset_camera()
-
-        # plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes)
         
         stats.append({
             "frame": i,
@@ -293,96 +285,103 @@ def pattern_stats(vtks, folder_path):
             "mean_roundness": np.mean(roundnesses),
             "std_roundness": np.std(roundnesses)
         })
-
-        if export:
-            v.add_frame()
-
-    if export:
-        v.close()
-
-
     stats_df = pd.DataFrame(stats)
+    print("\nClustering and alpha shapes analysis complete.")  
+ 
+    # plot the statistics over the simulation timeseries
+    print("Generating shape statistics plots...")
+    # figs = plot_alpha_shape_stats(stats_df)
+    figs = plot_alpha_shape_stats_vedo(stats_df)
+    print("Done")
 
+    # render the output
+    video_length=10
+    if export:
+        v = Video(
+            name=f"{folder_path.split('/')[-1]}_{c_prop}_f1.mp4", 
+            duration=video_length, 
+            backend="imageio")
 
+    plt = Plotter(interactive=False, shape="1|4", size=(1920,1080), sharecam=False)
+    # plt = Plotter(interactive=False, shape=(2,3), sharecam=False)
+    # plt.show(zoom="tight")#,axes=13)
+    plt.show(zoom="tight",axes=1)
+    plt.at(0).zoom(zoom)
 
-    
-    print(stats_df)
+    for frame, fig in zip(frames, figs):
+        a_meshes, p_meshes, info, tags = frame
+        fig1, fig2, fig3, fig4 = fig
+
+        plt.at(0).remove("a_mesh").add(a_meshes)
+        plt.at(0).remove("p_mesh").add(p_meshes)
+        plt.at(0).remove("info").add(info)
+        plt.at(0).remove("tag").add(tags)
+        plt.at(1).remove("fig1").add(fig1).reset_camera(tight=0)
+        plt.at(2).remove("fig2").add(fig2).reset_camera(tight=0)
+        plt.at(3).remove("fig3").add(fig3).reset_camera(tight=0)
+        plt.at(4).remove("fig4").add(fig4).reset_camera(tight=0)
+        plt.render()
+
+        v.add_frame() if export else None
+
+    v.close() if export else None
 
     def slider1(widget, event):
         val = widget.value # get the slider current value
 
-        plt.at(0).remove("a_mesh")
-        plt.at(0).remove("p_mesh")
-        plt.at(0).remove("info")
-        plt.at(0).remove("tag")
-
         a_meshes, p_meshes, info, tags= frames[int(val)]
 
-        plt.at(0).add(a_meshes)
-        plt.at(0).add(p_meshes)
-        plt.at(0).add(info)
-        plt.at(0).add(tags)
+        plt.at(0).remove("a_mesh").add(a_meshes)
+        plt.at(0).remove("p_mesh").add(p_meshes)
+        plt.at(0).remove("info").add(info)
+        plt.at(0).remove("tag").add(tags)
 
         if animate == 1:    # if matplotlib animation
-            plt.at(1).remove("fig")
             fig = figs[int(val)]
-            plt.at(1).add(fig)
-            plt.reset_camera(tight=0)
+            plt.at(1).remove("fig").add(fig).reset_camera(tight=0)
         
         if animate == 2:
             fig1, fig2, fig3, fig4 = figs[int(val)]
-            fig1.name = "fig1"
-            fig2.name = "fig2"
-            fig3.name = "fig3"
-            fig4.name = "fig4"
             plt.at(1).remove("fig1").add(fig1)
             plt.at(2).remove("fig2").add(fig2)
             plt.at(3).remove("fig3").add(fig3)
             plt.at(4).remove("fig4").add(fig4)
             
         plt.render()
-    # figs = plot_alpha_shape_stats(stats_df)
-    figs = plot_alpha_shape_stats_vedo(stats_df)
-    fig1, fig2, fig3, fig4 = figs[-1]
 
-    fig1.name = "fig1"
-    fig2.name = "fig2"
-    fig3.name = "fig3"
-    fig4.name = "fig4"
-    # plt.at(1).add(fig)
-    plt.at(1).add(fig1).reset_camera(tight=0)
-    plt.at(2).add(fig2).reset_camera(tight=0)
-    plt.at(3).add(fig3).reset_camera(tight=0)
-    plt.at(4).add(fig4).reset_camera(tight=0)
-    # plt.at(1).show(fig, resetcam=True)
-    # plt.at(1).reset_camera(tight=0)
     plt.at(0).add_slider(slider1, 0, len(frames)-1, pos=([0.1,0.9],[0.4,0.9]), value=len(frames))
-    plt.interactive().close()
+    plt.interactive()#.close()
 
     return stats_df
 
 def plot_alpha_shape_stats_vedo(d):
+    """Plot the spot shape statistics over simulation timecourse from dataframe of statistics"""
     figs = []
+    print(d)
+    # d.fillna(0, inplace=True)
     for i in range(len(d)):
-
+        
         fig1 = pyplot.plot(np.array(d["frame"]),np.array(d["n_clusters"]),
         xtitle="i", ytitle="No.clusters")
         fig1 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
-
+        fig1.name = "fig1"
 
         fig2 = pyplot.plot(np.array(d["frame"]),np.array(d["n_polygons"]),
         xtitle="i", ytitle="No. polygons")
         fig2 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+        fig2.name = "fig2"
         
         fig3 = pyplot.plot(np.array(d["frame"]),np.array(d["mean_area"]),
-        yerrors=np.array(d["std_area"]), error_band=True, ec="grey",
+        yerrors=np.array(d["std_area"])+0.0000001, error_band=True, ec="grey", # add small number to prevent errors - may lead to bugs later so careful
         xtitle="i", ytitle="Mean area")
         fig3 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+        fig3.name = "fig3"
 
         fig4 = pyplot.plot(np.array(d["frame"]),np.array(d["mean_roundness"]),
-        yerrors=np.array(d["std_roundness"]), error_band=True, ec="grey",
+        yerrors=np.array(d["std_roundness"])+0.0000001, error_band=True, ec="grey",
         xtitle="i", ytitle="Mean roundness")
         fig4 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+        fig4.name = "fig4"
     
         figs.append((fig1, fig2, fig3, fig4))
 
@@ -514,10 +513,11 @@ def print_help():
         -h              Show this help message and exit.
         -e              Export the rendering to video file.
         -c [c_prop]     Specify which cell property to colourise.
+                        e.g. cell_type, u, mech_str
         -f [function]   Pass which function you want to perform:
                         0   ...render moive (default)
                         1   ...cluster spot cells and get spot stats
-        -z [zoom]       Zoom factor for camera view         
+        -z [zoom]       Zoom factor for camera view (0.6 is default)      
         """
     
     print(help_message)
