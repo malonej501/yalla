@@ -33,6 +33,7 @@ def render_movie(vtks, folder_path):
     cmap = "viridis"
     lims = ((-1,6),(-1,6))
     # lims = ((-10,10),(-10,10))
+    cell_types = tissue_properties(vtks) # load global properties for consistent gui throught timecourse
 
     # Create a plotter
     plt = Plotter(interactive=False)
@@ -58,9 +59,8 @@ def render_movie(vtks, folder_path):
         bar = addons.ScalarBar(points, title=c_prop)
         info = Text2D(
             txt=(f"i: {i}\n"
-            f"n: {len(points.vertices)}\n"
-            f"n_1: {len(points.pointdata["cell_type"][points.pointdata["cell_type"] == 1])}\n"
-            f"n_2: {len(points.pointdata["cell_type"][points.pointdata["cell_type"] == 2])}\n"),
+                 f"n: {len(points.vertices)}\n" +
+                 "".join([f"n_{cell_type}: {len(points.pointdata['cell_type'][points.pointdata['cell_type'] == cell_type])}\n" for cell_type in cell_types])),
             pos="bottom-left")
 
         points.name = "cells"
@@ -182,7 +182,7 @@ def pattern_stats(vtks, folder_path):
     frames = []
     print(f"Clustering and alpha shapes analysis: {folder_path}")
     for i, mesh in enumerate(vtks):
-        sys.stdout.write(f"\rFrame: {i}")
+        sys.stdout.write(f"\rProcessing frame: {i}")
         sys.stdout.flush()
         mesh = vtks[i]
         X_spots = mesh.vertices[mesh.pointdata["cell_type"] == 1] # return positions of spot cells
@@ -291,7 +291,16 @@ def pattern_stats(vtks, folder_path):
             duration=video_length, 
             backend="imageio")
 
-    plt = Plotter(interactive=False, shape="1|4", size=(1920,1080), sharecam=False)
+    custom_shape = [ # specify the position and size of each rendering window in the plotter object
+        dict(bottomleft=(0.00,0.00), topright=(0.70,1.00)),
+        dict(bottomleft=(0.70,0.00), topright=(1.00,0.25)),
+        dict(bottomleft=(0.70,0.25), topright=(1.00,0.50)),
+        dict(bottomleft=(0.70,0.50), topright=(1.00,0.75)),
+        dict(bottomleft=(0.70,0.75), topright=(1.00,1.00)),
+    ]
+
+    # plt = Plotter(interactive=False, shape="1|4", size=(1920,1080), sharecam=False)
+    plt = Plotter(interactive=False, shape=custom_shape, size=(1200,900), sharecam=False)
     # plt = Plotter(interactive=False, shape=(2,3), sharecam=False)
     # plt.show(zoom="tight")#,axes=13)
     plt.show(zoom="tight",axes=1)
@@ -346,29 +355,31 @@ def pattern_stats(vtks, folder_path):
 def plot_alpha_shape_stats_vedo(d):
 
     """Plot the spot shape statistics over simulation timecourse from dataframe of statistics using vedo"""
+
+    t = 2.0 # text scale
     
     figs = []
     for i in range(len(d)):
         
         fig1 = pyplot.plot(np.array(d["frame"]),np.array(d["n_clusters"]),
-        xtitle="i", ytitle="No.clusters")
+        xtitle="i", ytitle="No.clusters", axes=dict(text_scale=t))
         fig1 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
         fig1.name = "fig1"
 
         fig2 = pyplot.plot(np.array(d["frame"]),np.array(d["n_polygons"]),
-        xtitle="i", ytitle="No. polygons")
+        xtitle="i", ytitle="No. polygons", axes=dict(text_scale=t))
         fig2 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
         fig2.name = "fig2"
         
         fig3 = pyplot.plot(np.array(d["frame"]),np.array(d["mean_area"]),
         yerrors=np.array(d["std_area"])+0.0000001, error_band=True, ec="grey", # add small number to prevent errors - may lead to bugs later so careful
-        xtitle="i", ytitle="Mean area")
+        xtitle="i", ytitle="Mean area", axes=dict(text_scale=t), xlim=(0, None))
         fig3 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
         fig3.name = "fig3"
 
         fig4 = pyplot.plot(np.array(d["frame"]),np.array(d["mean_roundness"]),
         yerrors=np.array(d["std_roundness"])+0.0000001, error_band=True, ec="grey",
-        xtitle="i", ytitle="Mean roundness")
+        xtitle="i", ytitle="Mean roundness", axes=dict(text_scale=t))
         fig4 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
         fig4.name = "fig4"
     
@@ -487,14 +498,16 @@ def plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_sh
     plt.title(f"Estimated number of clusters: {len(unique_labels)}")
     plt.show()
 
-# def render_alpha_shape_mesh(vtks):
-
-#     _, a_shapes_np = pattern_stats(vtks)
-
-#     # plt = applications.Browser(vtks, bg = 'k')
-#     # plt.show(interactive = True).close()
-#     print(mesh)
+def tissue_properties(vtks):
+    """Return properties of the tissue over the entire timecourse, not deducible
+    from individual vtk files e.g. maximum no. cell types"""
+    cell_types = []
+    for vtk in vtks:
+        cell_types_i = np.unique(vtk.pointdata["cell_type"])
+        if len(cell_types_i) > len(cell_types):
+            cell_types = cell_types_i # get the maximum no. cell types
     
+    return cell_types
 
 def print_help():
     help_message = """
@@ -514,7 +527,6 @@ def print_help():
     print(help_message)
 
     
-
 if __name__ == "__main__":
     # collect bash arguments
     args = sys.argv[1:]
