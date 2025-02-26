@@ -32,50 +32,71 @@ const float dt = 0.1;        // Time step for Euler integration
 const int no_frames = 100;   // no. frames of simulation output to vtk
 
 // tissue initialisation
-const int tmode = 3;  // condition for initialisation of cells 0-random disk,
-                      // 1-regular rectangle, 2-regular rectangle with spot,
-                      // 3-fin mesh (need 10000 init cells at least)
+const int tmode = 2;           // condition for initialisation of cells
+                               // 0-random disk,
+                               // 1-regular rectangle,
+                               // 2-regular rectangle with spot,
+                               // 3-fin mesh (need 10000 init cells at least)
+                               // 4-fin mesh with spot
 const float init_dist = 0.05;  // mean distance between cells when initialised
-const float div_dist = 0.01;
-const int n_0 = 10000;  // 450;//500;//350;         // Initial number of cells
-                        // n.b. this number needs to divide properly between
-                        // stripes if using volk initial condition
-const int A_init = 0;   // % type 1 cells in initial population
+const float div_dist = 0.01;   // distance between parent and child cells
+const int n_0 = 10000;         // Initial number of cells
+                               // n.b. this number needs to divide equally
+                               // between stripes if using volk init condition
+const int A_init = 2;          // % type 1 cells in initial population
 const bool fin_walls = false;  // force walls in fin shape
-const bool fin_rays = false;   // different advection strength between fin rays
+const bool fin_rays = true;    // different advection strength between fin rays
 
 // cell migration parameters
+const bool mov = true;           // cell movement switch
 const bool diff_adh_rep = true;  // differential adhesion and repulsion switch
-const float rii = 0.012;   // Length scales for migration forces for iri-iri
-const float Rii = 0.0045;  // Repulsion from iri to iri
-const float aii = 0.019;
-const float Aii = 0.0019;
+const float rii = 0.012;         // A-A repulsion length scale
+const float Rii = 0.0045;        // A-A repulsion strength
+const float aii = 0.019;         // A-A adhesion length scale
+const float Aii = 0.0019;        // A-A adhesion strength
+const float rdd = rii;           // Default repulsion length scale
+const float Rdd = Rii;           // Default repulsion strength
+const float add = 1;             // Default adhesion length scale
+const float Add = 0;             // Default adhesion strength
 
 // advection parameters
-const bool adv = false;     // advection switch
-const float ad_s = 0.001;   // default advection strength
-const float soft_ad_s = 0;  // 0.0003;// advection strength in inter-rays
+const bool adv = true;           // advection switch
+const float ad_s = 0.001;        // default advection strength
+const float soft_ad_s = 0.0005;  // 0.0003;// advection strength in inter-rays
 
 // proliferation parameters
-const bool prolif = true;  // proliferation switch
-const int pmode = 0;       // proliferation rules
-                           // 0-no child type switching
-                           // 1-t2->t1 switching depending on r_A_birth
-// 2-t1->t2 switching dep on r_A_birth and ifu < uthresh
-// for parent
-const float A_div = 0.006;      // division rate for T1/A cells
-const float B_div = 0.006;      // division rate for T2/B cells
-const float r_A_birth = 0.008;  // chance of type 2 cells producing type 1 cells
+const bool prolif = true;       // proliferation switch
+const int pmode = 0;            // proliferation rules
+                                // 0-no child type switching
+                                // 1-t2->t1 switching depending on r_A_birth
+                                // 2-t1->t2 switching dep on r_A_birth
+                                // and ifu < uthresh for parent
+const float A_div = 0.005;      // division rate for T1/A cells
+const float B_div = 0.0000004;  // division rate for T2/B cells
+const float C_div = 0;          // division rate for T3/C cells
+const float r_A_birth = 0.000;  // chance of type 2 cells producing type 1 cells
 const float uthresh = 0.015;    // B/t2 cell children will not spawn as A/t1 if
                                 // the amount of u exceeds this value
-const float vthresh = 0.9;  // B/t2 cells will switch to A/t1 if the amount of v
-                            // exceeds this value
+const float vthresh = 0.9;      // B/t2 cells will switch to A/t1 if the amount
+                                // of v exceeds this value
 const float mech_thresh = 0.05;  // max mech_str under which cells can divide
 
-// chemical diffusion rates - this is Fick's first law?
-// for mutual inhibition
+// chemical parameters
+const int cmode = 0;  // chemical behaviour
+                      // 0 - production and diffusion
+                      // 1 - Schnackenberg
+// const float D_u = 0.0000000000001;  // Diffusion rate of chemical u
+// const float D_v = 0.0000000008;        // Diffusion rate of chemical v
 const float D_u = 0.1;
-const float D_v = 0.01;
+const float D_v = 0.05;
+const float a_u = 5;
+const float b_v = 0.001;
+
+const bool type_switch = true;  // switch cell types based on chemical amounts
+                                // cell types
+                                // 1 - A - spot cells
+                                // 2 - B - non-spot cells
+                                // 3 - C - static spot cells
 
 // For Gray-Scott
 // const float D_u = 0.01;
@@ -90,67 +111,86 @@ const float D_v = 0.01;
 // to use MAKE_PT(Cell) replace every instance of float3 with Cell
 MAKE_PT(Cell, u, v);
 
-__device__ float* d_mechanical_strain;  // define global variable for mechanical
-                                        // strain on the GPU (device)
-__device__ int* d_cell_type;  // global variable for cell type on the GPU -
-                              // iridophore=1, xanthophore=2, DEAD=0
-__device__ Cell* d_W;  // global variable for random number from Weiner process
-                       // for stochasticity
-__device__ int* d_ngs_type_A;  // no. iri cells in neighbourhood
-__device__ int* d_ngs_type_B;  // no. xan cells in neighbourhood
+// define global variables for the GPU
+__device__ float* d_mechanical_strain;
+__device__ int* d_cell_type;  // cell_type: A=1, B=2, DEAD=0
+__device__ Cell* d_W;  // random number from Weiner process for stochasticity
+__device__ int* d_ngs_type_A;  // no. A cells in neighbourhood
+__device__ int* d_ngs_type_B;  // no. B cells in neighbourhood
 
 template<typename Pt>
 __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 {
     Pt dF{0};
 
-    // if (dist > r_max) return dF; // Gabriel solver doesn't account for
-    // distance when computing neighbourhood, we need to exclude distant pairs
     if (dist > r_max) return dF;  // set cutoff for computing interaction forces
 
-
-    // This will be only useful in simulations with a wall and a ghost node
-    if (i == j) {
+    if (i == j) {      // if the cell is interacting with itself
         dF += d_W[i];  // add stochasticity from the weiner process to the
                        // attributes of the cells
 
-        // each cell type has a base line production rate of chemical u or v
-        // depending on cell type
-        float k_prod = 0.3;
-        dF.u = k_prod * (1.0 - Xi.u) *
-               (d_cell_type[i] == 1);  // cell type 1 produces chemical u
-        dF.v = k_prod * (1.0 - Xi.v) *
-               (d_cell_type[i] == 2);  // cell type 2 produces chemical v
+        // Chemical production and degredation
 
-        // add degredation not dependent on anything
-        float k_deg = 0.03;
-        dF.u -= k_deg * (Xi.u);
-        dF.v -= k_deg * (Xi.v);
+        if (cmode == 0) {  // chemical production and degredation
+            // each cell type has a base line production rate of chemical u
+            // or v depending on cell type
+            float k_prod = 0.3;
+            dF.u =
+                k_prod * (1.0 - Xi.u) *
+                (d_cell_type[i] == 1 or
+                    d_cell_type[i] == 3);  // cell type 1/3 produces chemical u
+            dF.v = k_prod * (1.0 - Xi.v) *
+                   (d_cell_type[i] == 2);  // cell type 2 produces chemical v
 
+            // add degredation not dependent on anything
+            float k_deg = 0.03;
+            dF.u -= k_deg * (Xi.u);
+            dF.v -= k_deg * (Xi.v);
+        }
+
+        if (cmode == 1) {
+            // see Schnackenberg 1979 eq. 41
+            // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + a_u;
+            // dF.v = -(Xi.u * Xi.u * Xi.v) + b_v;
+            // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + 2;
+            // dF.v = 0.1 - (Xi.u * Xi.u * Xi.v);
+            dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + (Xi.x * 0.1);
+            dF.v = -(Xi.u * Xi.u * Xi.v) + (Xi.y * 0.1);
+        }
         return dF;
     }
 
     // Diffusion
     dF.u = -D_u * r.u;
     dF.v = -D_v * r.v;
+    // dF.u = -Xi.x * r.u * 0.01;
+    // dF.v = -Xi.y * r.v * 0.01;
+    // dF.u = -1 * r.u;
+    // dF.v = -40 * r.v;
+    // dF.u = -0.01 * r.u;
+    // dF.v = -0.05 * r.v;
 
-    if (dist < 0.075) {  // the radius of the inner disc
-        // count no. each cell type in neighbourhood
-        if (d_cell_type[j] == 1)
+    if (dist < 0.075) {           // the radius of the inner disc
+        if (d_cell_type[j] == 1)  // count no. each cell type in neighbourhood
             d_ngs_type_A[i] += 1;
         else
             d_ngs_type_B[i] += 1;
     }
 
-    // we define the default strength of adhesion and repulsion
-    float Adh = 0;
-    float adh = 1;
-    float Rep = Rii;
-    float rep = rii;
+    // Mechanical forces
+
+    if (!mov) return dF;  // if cell movement is off, return no forces
+
+    // default adhesion and repulsion vals for cell interactions
+    float Adh = Add;
+    float adh = add;
+    float Rep = Rdd;
+    float rep = rdd;
 
     if (diff_adh_rep) {
-        if (d_cell_type[i] == 1 and d_cell_type[j] == 1) {  // iri -> iri
-            Adh = Aii;
+        if ((d_cell_type[i] == 1 and d_cell_type[j] == 1) or
+            (d_cell_type[i] == 3 and d_cell_type[j] == 3)) {
+            Adh = Aii;  // A-A interact with different adh and rep vals
             adh = aii;
             Rep = Rii;
             rep = rii;
@@ -181,8 +221,6 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // adding to the values in the current time step This function is in solvers
     // in the euler_step function
 
-    // advection
-    // if (adv) dF.x -= 0.001; // migration in X only if adv switched on
     // Advection
     float rays[4][2] = {
         {0.1, 0.3},
@@ -191,8 +229,16 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         {1.0, 1.2},
     };
 
-    if (adv and d_cell_type[i] == 1) {
-        float ad = ad_s;  // default advection strength
+
+    // float scaling_factor = 5;
+    // Scale the array elements
+    for (int i = 0; i < 4; ++i) {
+        // for (int j = 0; j < 2; ++j) { rays[i][j] *= scaling_factor; }
+        for (int j = 0; j < 2; ++j) { rays[i][j] += i; }
+    }
+
+    if (adv and d_cell_type[i] == 1) {  // only type 1 one cells advect
+        float ad = ad_s;                // default advection strength
 
         if (fin_rays) {
             for (int k = 0; k < 4; ++k) {  // Check if the cell is within any of
@@ -241,6 +287,11 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
     }
 
     if (d_cell_type[i] == 2) {
+        if (d_mechanical_strain[i] > mech_thresh) return;
+        if (curand_uniform(&d_state[i]) > (B_div * dt)) return;
+    }
+
+    if (d_cell_type[i] == 3) {
         if (d_mechanical_strain[i] > mech_thresh) return;
         if (curand_uniform(&d_state[i]) > (B_div * dt)) return;
     }
@@ -298,9 +349,17 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
-    if (d_cell_type[i] == 1) {
-        if (d_X[i].v > 0.62) d_cell_type[i] = 2;
+    if (d_cell_type[i] == 1) {  // spot cells become static when u is high
+        if (d_X[i].u > 0.9) d_cell_type[i] = 3;
     }
+
+    if (d_cell_type[i] == 3) {  // lateral inhibition of static spot clusters
+        if (d_X[i].u < 0.75) d_cell_type[i] = 2;
+    }
+
+    // if (d_cell_type[i] == 1) {
+    //     if (d_X[i].v > 0.62) d_cell_type[i] = 2;
+    // }
 
     // if (d_cell_type[i] == 2) {
     //     if (d_X[i].u > 0.8) d_cell_type[i] = 1;
@@ -363,11 +422,16 @@ int main(int argc, char const* argv[])
     std::cout << "fin_rays = " << (fin_rays ? "true" : "false") << "\n\n";
 
     std::cout << "Cell Migration Parameters:\n";
+    std::cout << "mov = " << (mov ? "true" : "false") << "\n";
     std::cout << "diff_adh_rep = " << (diff_adh_rep ? "true" : "false") << "\n";
     std::cout << "rii = " << rii << "\n";
     std::cout << "Rii = " << Rii << "\n";
     std::cout << "aii = " << aii << "\n";
     std::cout << "Aii = " << Aii << "\n\n";
+    std::cout << "rdd = " << rdd << "\n";
+    std::cout << "Rdd = " << Rdd << "\n";
+    std::cout << "add = " << add << "\n";
+    std::cout << "Add = " << Add << "\n\n";
 
     std::cout << "Advection Parameters:\n";
     std::cout << "adv = " << (adv ? "true" : "false") << "\n";
@@ -383,10 +447,12 @@ int main(int argc, char const* argv[])
     std::cout << "uthresh = " << uthresh << "\n";
     std::cout << "mech_thresh = " << mech_thresh << "\n\n";
 
-    std::cout << "Chemical Diffusion Rates:\n";
+    std::cout << "Chemical Parameters:\n";
+    std::cout << "cmode = " << cmode << "\n";
     std::cout << "D_u = " << D_u << "\n";
     std::cout << "D_v = " << D_v << "\n\n";
-
+    std::cout << "a_u = " << a_u << "\n";
+    std::cout << "b_v = " << b_v << "\n\n";
 
     /*
     Prepare Random Variable for the Implementation of the Wiener Process
@@ -478,6 +544,22 @@ int main(int argc, char const* argv[])
                                             // cells, and 2 for all others
         }
     }
+    if (tmode == 4) {  // cut the fin mesh out of a random cloud of cells
+        Mesh fin{"../inits/fin_mesh_3D.vtk"};
+        fin.rescale(3);  // expand the mesh to fit to the boundaries
+        random_rectangle(
+            init_dist, fin.get_minimum(), fin.get_maximum(), cells);
+        auto new_n =
+            thrust::remove_if(thrust::host, cells.h_X, cells.h_X + *cells.h_n,
+                [&fin](Cell x) { return fin.test_exclusion(x); });
+        *cells.h_n = std::distance(cells.h_X, new_n);
+        for (int i = 0; i < n_0; i++) {  // set cell types
+            if (cells.h_X[i].x < -2)
+                cell_type.h_prop[i] = (std::rand() % 100 < 50) ? 1 : 2;
+            else
+                cell_type.h_prop[i] = 2;
+        }
+    }
 
     // initialise random chemical amounts
     for (int i = 0; i < n_0; i++) {
@@ -488,8 +570,8 @@ int main(int argc, char const* argv[])
     }
 
     // Initialise properties and k with zeroes
-    for (int i = 0; i < n_max; i++) {  // initialise with zeroes, for loop step
-                                       // size is set to 1 with i++
+    for (int i = 0; i < n_max; i++) {  // initialise with zeroes, for loop
+                                       // step size is set to 1 with i++
         mechanical_strain.h_prop[i] = 0;
         ngs_type_A.h_prop[i] = 0;
         ngs_type_B.h_prop[i] = 0;
@@ -498,9 +580,9 @@ int main(int argc, char const* argv[])
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
                                 Cell* d_dX) {  // then set the mechanical forces
                                                // to zero on the device
-        // Set these properties to zero after every timestep so they don't
-        // accumulate Called every timesetep, allows you to add custom forces at
-        // every timestep e.g. advection
+        // Set these properties to zero after every timestep so they
+        // don't accumulate Called every timesetep, allows you to add
+        // custom forces at every timestep e.g. advection
         thrust::fill(thrust::device, mechanical_strain.d_prop,
             mechanical_strain.d_prop + cells.get_d_n(), 0.0);
         thrust::fill(thrust::device, ngs_type_A.d_prop,
@@ -525,14 +607,14 @@ int main(int argc, char const* argv[])
     Vtk_output output{"out"};  // create instance of Vtk_output class
 
 
-    /* the neighbours are initialised with 0. However, you want to use them in
-       the proliferation function, which is called first.
+    /* the neighbours are initialised with 0. However, you want to use them
+       in the proliferation function, which is called first.
         1. proliferation
         2. noise
         3. take_step
-       we use a trick, such that the very first call of the proliferation is not
-       launched on zeros. here instead of dt we pass 0.0, so that we count
-       cells, but do not compute any replacements in the tissue
+       we use a trick, such that the very first call of the proliferation is
+       not launched on zeros. here instead of dt we pass 0.0, so that we
+       count cells, but do not compute any replacements in the tissue
        -> x[t+1] = x[t] + 0.0 * (dx);
     */
 
@@ -550,8 +632,7 @@ int main(int argc, char const* argv[])
     output.write_property(cell_type);
     output.write_property(ngs_type_A);
     output.write_property(ngs_type_B);
-    output.write_field(
-        cells, "u", &Cell::u);  // write the u part of each cell to vtk
+    output.write_field(cells, "u", &Cell::u);  // write u of each cell to vtk
     output.write_field(cells, "v", &Cell::v);
 
 
@@ -560,14 +641,15 @@ int main(int argc, char const* argv[])
         for (float T = 0.0; T < 1.0; T += dt) {
             generate_noise<<<(cells.get_d_n() + 32 - 1) / 32, 32>>>(
                 cells.get_d_n(),
-                d_state);  // generate random noise which we will use later on
-                           // to move the cells
+                d_state);  // generate random noise which we will use later
+                           // on to move the cells
             if (prolif)
                 proliferation<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
                     cells.d_n);  // simulate proliferation
-            // cell_switching<<<(cells.get_d_n() + 128 - 1)/128,
-            // 128>>>(cells.get_d_n(), cells.d_X); // switch cell types if
+            if (type_switch)
+                cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                    cells.get_d_n(), cells.d_X);  // switch cell types if
             // conditions are met
             cells.take_step<pairwise_force, friction_on_background>(
                 dt, generic_function);
@@ -585,8 +667,8 @@ int main(int argc, char const* argv[])
             output.write_property(cell_type);
             output.write_property(ngs_type_A);
             output.write_property(ngs_type_B);
-            output.write_field(
-                cells, "u", &Cell::u);  // write the u part of each cell to vtk
+            output.write_field(cells, "u",
+                &Cell::u);  // write the u part of each cell to vtk
             output.write_field(cells, "v", &Cell::v);
         }
     }
