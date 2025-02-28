@@ -11,6 +11,7 @@
 
 #include <functional>
 
+#include "mesh.cuh"
 #include "utils.cuh"
 
 
@@ -151,7 +152,7 @@ void link_forces(Links& links, const Pt* __restrict__ d_X, Pt* d_dX)
 // Pairwise forces between cells and the wall.
 template<typename Pt>
 using Wall_force = void(const Pt* __restrict__ d_X, const int i,
-    const int wall_idx, Pt* d_dX, int* d_nints);
+    const int wall_idx, Pt* d_dX, int* d_nints, const float w_off_s);
 
 // Wall force implementation with one wall normal to Z axis
 template<typename Pt>
@@ -170,14 +171,14 @@ __device__ void xy_wall_relu_force(const Pt* __restrict__ d_X, const int i,
 }
 
 template<typename Pt, Wall_force<Pt> force>
-__global__ void wall(
-    const Pt* __restrict__ d_X, Pt* d_dX, int n_max, int wall_idx, int* d_nints)
+__global__ void wall(const Pt* __restrict__ d_X, Pt* d_dX, int n_max,
+    int wall_idx, int* d_nints, const float w_off_s)
 {
     auto i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_max) return;
     if (i == wall_idx) return;
 
-    force(d_X, i, wall_idx, d_dX, d_nints);
+    force(d_X, i, wall_idx, d_dX, d_nints, w_off_s);
 }
 
 template<typename Pt>
@@ -241,15 +242,16 @@ __device__ void boundary_force(const Pt* __restrict__ d_X, const int i,
 
 // wall force for multiple walls
 template<typename Pt, Wall_force<Pt> force>
-void wall_forces_mult(
-    const int n, const Pt* __restrict__ d_X, Pt* d_dX, const int wall_idx)
+void wall_forces_mult(const int n, const Pt* __restrict__ d_X, Pt* d_dX,
+    const int wall_idx, const float w_off_s)
 {
     int* d_nints;
     cudaMalloc(&d_nints, 2 * sizeof(int));
     thrust::fill(thrust::device, d_nints, d_nints + 2, 0);
 
     // Launch a single kernel that handles multiple walls
-    wall<Pt, force><<<(n + 32 - 1) / 32, 32>>>(d_X, d_dX, n, wall_idx, d_nints);
+    wall<Pt, force>
+        <<<(n + 32 - 1) / 32, 32>>>(d_X, d_dX, n, wall_idx, d_nints, w_off_s);
 }
 
 
@@ -258,40 +260,35 @@ template<typename Pt>
 __device__ float distance_to_plane(
     const Pt& point, const float* norm, const float off)
 {  // the distance will be negative if the point is on the opposite side of the
-   // normal
+   // normal from the origin
     return -(norm[0] * point.x + norm[1] * point.y + norm[2] * point.z - off) /
-           sqrtf(norm[0] * norm[0] + norm[1] * norm[1] + norm[2] * norm[2]);
+           norm3df(norm[0], norm[1], norm[2]);
 }
 
 template<typename Pt>
 __device__ void boundary_forces_mult(const Pt* __restrict__ d_X, const int i,
-    const int wall_idx, Pt* d_dX, int* d_nints)
+    const int wall_idx, Pt* d_dX, int* d_nints, const float w_off_s)
 {
-    // Walls are defined as Ax + By + Cz = D
-    // Wall normals are (A, B, C)
+    // Walls are defined as Ax + By + Cz = D with normals A, B, C and offset D
     float w_norms[5][3] = {
         {-1, 0, 0},  // plane at x=-off   (off short for offset)
         {1, 0, 0},   // plane at x=off
         {0, 1, 0},   // plane at y=off
         {0, -1, 0},  // plane at y=-off
-        {-1, -1, 0}  // plane at y + x = off
     };
 
-    // Wall offsets are D
-    float w_off[] = {0.25f, 1.0f, 0.25f, 0.75f,
-        0.5f};             // Offsets for each wall, order same as w_norms
-    float w_off_s = 4;     // Scaling factor for the wall offsets
-    int num_walls = 5;     // Number of walls
-    float w_fmax = 0.5;    // Maximum force from wall
-    float w_thresh = 0.5;  // Threshold distance for applying force
+    float w_off[] = {1, 1, 0.5, 0.5};  // Offsets, order same as w_norms
+    // float w_off_s = 1;                 // Scaling factor for the wall offsets
+    int num_walls = 4;   // Number of walls
+    float w_fmax = 0;    // Force from wall at the wall
+    float w_thresh = 0;  // Threshold distance for applying force
+
     for (int w = 0; w < num_walls; ++w) {
-        // Compute the distance to the wall (wth wall index)
-        float dist_wall =
+        float dist_wall =  // Get the distance to the wall (wth wall index)
             distance_to_plane(d_X[i], w_norms[w], w_off[w] * w_off_s);
         if (dist_wall < w_thresh) {
             auto F_mag = fmaxf(w_fmax - dist_wall, 0);  // linear force increase
-            // auto F_mag = w_fmax * expf(-dist_wall); // exponential force
-            // increase Compute the force direction (normalized wall normal)
+            // Compute the force direction (normalized wall normal)
             float norm = sqrtf(w_norms[w][0] * w_norms[w][0] +
                                w_norms[w][1] * w_norms[w][1] +
                                w_norms[w][2] * w_norms[w][2]);
@@ -302,8 +299,7 @@ __device__ void boundary_forces_mult(const Pt* __restrict__ d_X, const int i,
             float F_dir_y = -w_norms[w][1] / norm;
             // float F_dir_z = w_norms[w][2] / norm;
 
-            // Apply the force if the particle is within the threshold distance
-            // (0.5 units)
+            // Apply the force to the cell
             d_dX[i].x += F_mag * F_dir_x;
             d_dX[i].y += F_mag * F_dir_y;
             // d_dX[i].z += F_mag * F_dir_z;
