@@ -26,13 +26,13 @@
 // global simulation parameters
 const float r_max = 0.1;     // Max interac distance betwen two cells
 const int n_max = 200000;    // Max number of cells
-const float noise = 0;       // 0.01;//0.015;//0.005;  // Magnitude of noise
+const float noise = 0.0;     // 0.01;//0.015;//0.005;  // Magnitude of noise
 const int cont_time = 1000;  // Simulation duration
 const float dt = 0.1;        // Time step for Euler integration
 const int no_frames = 100;   // no. frames of simulation output to vtk
 
 // tissue initialisation
-const int tmode = 2;           // condition for initialisation of cells
+const int tmode = 4;           // condition for initialisation of cells
                                // 0-random disk,
                                // 1-regular rectangle,
                                // 2-regular rectangle with spot,
@@ -43,8 +43,10 @@ const float div_dist = 0.01;   // distance between parent and child cells
 const int n_0 = 10000;         // Initial number of cells
                                // n.b. this number needs to divide equally
                                // between stripes if using volk init condition
-const int A_init = 2;          // % type 1 cells in initial population
-const bool fin_walls = false;  // force walls in fin shape
+const int A_init = 10;         // % type 1 cells in initial population
+const float tis_s = 3;         // scale factor for init tissue - applies to 3, 4
+const bool fin_walls = true;   // activate force walls
+const float w_off_s = 3;       // scale factor for wall offsets (fit with tis_s)
 const bool fin_rays = true;    // different advection strength between fin rays
 
 // cell migration parameters
@@ -72,7 +74,7 @@ const int pmode = 0;            // proliferation rules
                                 // 2-t1->t2 switching dep on r_A_birth
                                 // and ifu < uthresh for parent
 const float A_div = 0.005;      // division rate for T1/A cells
-const float B_div = 0.0000004;  // division rate for T2/B cells
+const float B_div = 0.000001;   // division rate for T2/B cells
 const float C_div = 0;          // division rate for T3/C cells
 const float r_A_birth = 0.000;  // chance of type 2 cells producing type 1 cells
 const float uthresh = 0.015;    // B/t2 cell children will not spawn as A/t1 if
@@ -87,16 +89,18 @@ const int cmode = 0;  // chemical behaviour
                       // 1 - Schnackenberg
 // const float D_u = 0.0000000000001;  // Diffusion rate of chemical u
 // const float D_v = 0.0000000008;        // Diffusion rate of chemical v
-const float D_u = 0.1;
+const float D_u = 1;
 const float D_v = 0.05;
 const float a_u = 5;
 const float b_v = 0.001;
 
-const bool type_switch = true;  // switch cell types based on chemical amounts
-                                // cell types
-                                // 1 - A - spot cells
-                                // 2 - B - non-spot cells
-                                // 3 - C - static spot cells
+const bool type_switch = false;  // switch cell types based on chemical amounts
+                                 // cell types
+                                 // 1 - A - spot cells
+                                 // 2 - B - non-spot cells
+                                 // 3 - C - static spot cells
+const bool death_switch = true;
+const float u_death = 0.6;  // u threshold for cell type 1 death
 
 // For Gray-Scott
 // const float D_u = 0.01;
@@ -143,7 +147,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
                    (d_cell_type[i] == 2);  // cell type 2 produces chemical v
 
             // add degredation not dependent on anything
-            float k_deg = 0.03;
+            float k_deg = 0.1;
             dF.u -= k_deg * (Xi.u);
             dF.v -= k_deg * (Xi.v);
         }
@@ -189,7 +193,9 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
     if (diff_adh_rep) {
         if ((d_cell_type[i] == 1 and d_cell_type[j] == 1) or
-            (d_cell_type[i] == 3 and d_cell_type[j] == 3)) {
+            (d_cell_type[i] == 3 and d_cell_type[j] == 3) or
+            (d_cell_type[i] == 1 and d_cell_type[j] == 3) or
+            (d_cell_type[i] == 3 and d_cell_type[j] == 1)) {
             Adh = Aii;  // A-A interact with different adh and rep vals
             adh = aii;
             Rep = Rii;
@@ -283,6 +289,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
 
     if (d_cell_type[i] == 1) {
         if (d_mechanical_strain[i] > mech_thresh) return;
+        // if (d_X[i].u > 0.85) return;
         if (curand_uniform(&d_state[i]) > (A_div * dt)) return;
     }
 
@@ -329,7 +336,8 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
                     : 2;  // sometimes cell type 2 produces cell type 1 random
                           // birth of cell type 1 is inhibited by chemical u
     }
-    if (d_cell_type[i] == 1) { d_cell_type[n] = 1; }
+    if (d_cell_type[i] == 1) d_cell_type[n] = 1;
+    if (d_cell_type[i] == 3) d_cell_type[n] = 3;
 
     // set child cell chemical amounts
     // d_X[n].u = (d_cell_type[n] == 1) ? 1 : 0;     // if the child is type 1,
@@ -349,13 +357,20 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
-    if (d_cell_type[i] == 1) {  // spot cells become static when u is high
-        if (d_X[i].u > 0.9) d_cell_type[i] = 3;
-    }
+    if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 2;
 
-    if (d_cell_type[i] == 3) {  // lateral inhibition of static spot clusters
-        if (d_X[i].u < 0.75) d_cell_type[i] = 2;
-    }
+    // if (d_cell_type[i] == 1) {  // spot cells become static when u is high
+    //     // if (d_X[i].u > 0.9) d_cell_type[i] = 3;
+    //     if (d_X[i].u > 0.7) d_cell_type[i] = 2;
+    // }
+
+    // if (d_cell_type[i] == 3) {  // lateral inhibition of static spot clusters
+    //     if (d_X[i].u < 0.85) d_cell_type[i] = 2;
+    // }
+
+    // if (d_cell_type[i] == 1) {  // lateral inhibition of static spot clusters
+    //     if (d_X[i].u > 0.9) d_cell_type[i] = 2;
+    // }
 
     // if (d_cell_type[i] == 1) {
     //     if (d_X[i].v > 0.62) d_cell_type[i] = 2;
@@ -364,6 +379,24 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
     // if (d_cell_type[i] == 2) {
     //     if (d_X[i].u > 0.8) d_cell_type[i] = 1;
     // }
+}
+
+__global__ void death(int n_cells, Cell* d_X, int* d_n_cells)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n_cells) return;
+
+    if (d_X[i].u > u_death &&
+        // if (d_X[i].u > (d_X[i].x / 4) and
+        d_cell_type[i] == 1) {            // die if type 1 and u high
+        int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
+        // overwrite cell i with last cell in d_X, stop if only one cell left
+        if (i < n) {
+            d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
+            d_cell_type[i] = d_cell_type[n - 1];
+            d_mechanical_strain[i] = d_mechanical_strain[n - 1];
+        }
+    }
 }
 
 __global__ void find_min_max_x(
@@ -402,57 +435,6 @@ int main(int argc, char const* argv[])
 {
     std::cout << std::fixed
               << std::setprecision(6);  // set precision for floats
-
-    // Print the parameters
-    std::cout << "Global Simulation Parameters:\n";
-    std::cout << "r_max = " << r_max << "\n";
-    std::cout << "n_max = " << n_max << "\n";
-    std::cout << "noise = " << noise << "\n";
-    std::cout << "cont_time = " << cont_time << "\n";
-    std::cout << "dt = " << dt << "\n";
-    std::cout << "no_frames = " << no_frames << "\n\n";
-
-    std::cout << "Tissue Initialization:\n";
-    std::cout << "tmode= " << tmode << "\n";
-    std::cout << "init_dist = " << init_dist << "\n";
-    std::cout << "div_dist = " << div_dist << "\n";
-    std::cout << "n_0 = " << n_0 << "\n";
-    std::cout << "A_init = " << A_init << "\n";
-    std::cout << "fin_walls = " << (fin_walls ? "true" : "false") << "\n";
-    std::cout << "fin_rays = " << (fin_rays ? "true" : "false") << "\n\n";
-
-    std::cout << "Cell Migration Parameters:\n";
-    std::cout << "mov = " << (mov ? "true" : "false") << "\n";
-    std::cout << "diff_adh_rep = " << (diff_adh_rep ? "true" : "false") << "\n";
-    std::cout << "rii = " << rii << "\n";
-    std::cout << "Rii = " << Rii << "\n";
-    std::cout << "aii = " << aii << "\n";
-    std::cout << "Aii = " << Aii << "\n\n";
-    std::cout << "rdd = " << rdd << "\n";
-    std::cout << "Rdd = " << Rdd << "\n";
-    std::cout << "add = " << add << "\n";
-    std::cout << "Add = " << Add << "\n\n";
-
-    std::cout << "Advection Parameters:\n";
-    std::cout << "adv = " << (adv ? "true" : "false") << "\n";
-    std::cout << "ad_s = " << ad_s << "\n";
-    std::cout << "soft_ad_s = " << soft_ad_s << "\n\n";
-
-    std::cout << "Proliferation Parameters:\n";
-    std::cout << "prolif = " << (prolif ? "true" : "false") << "\n";
-    std::cout << "pmode = " << pmode << "\n";
-    std::cout << "A_div = " << A_div << "\n";
-    std::cout << "B_div = " << B_div << "\n";
-    std::cout << "r_A_birth = " << r_A_birth << "\n";
-    std::cout << "uthresh = " << uthresh << "\n";
-    std::cout << "mech_thresh = " << mech_thresh << "\n\n";
-
-    std::cout << "Chemical Parameters:\n";
-    std::cout << "cmode = " << cmode << "\n";
-    std::cout << "D_u = " << D_u << "\n";
-    std::cout << "D_v = " << D_v << "\n\n";
-    std::cout << "a_u = " << a_u << "\n";
-    std::cout << "b_v = " << b_v << "\n\n";
 
     /*
     Prepare Random Variable for the Implementation of the Wiener Process
@@ -528,14 +510,14 @@ int main(int argc, char const* argv[])
                                               // cells, and 2 for all others
         }
     }
-    if (tmode == 3) {  // cut the fin mesh out of a random cloud of cells
-        Mesh fin{"../inits/fin_mesh_3D.vtk"};
-        fin.rescale(3);  // expand the mesh to fit to the boundaries
+    if (tmode == 3) {  // cut the tissue mesh out of a random cloud of cells
+        Mesh tis{"../inits/shape1_mesh_3D.vtk"};
+        tis.rescale(tis_s);  // expand the mesh to fit to the boundaries
         random_rectangle(
-            init_dist, fin.get_minimum(), fin.get_maximum(), cells);
+            init_dist, tis.get_minimum(), tis.get_maximum(), cells);
         auto new_n =
             thrust::remove_if(thrust::host, cells.h_X, cells.h_X + *cells.h_n,
-                [&fin](Cell x) { return fin.test_exclusion(x); });
+                [&tis](Cell x) { return tis.test_exclusion(x); });
         *cells.h_n = std::distance(cells.h_X, new_n);
         for (int i = 0; i < n_0; i++) {  // set cell types
             cell_type.h_prop[i] = (std::rand() % 100 < A_init)
@@ -545,16 +527,18 @@ int main(int argc, char const* argv[])
         }
     }
     if (tmode == 4) {  // cut the fin mesh out of a random cloud of cells
-        Mesh fin{"../inits/fin_mesh_3D.vtk"};
-        fin.rescale(3);  // expand the mesh to fit to the boundaries
+        Mesh tis{"../inits/shape1_mesh_3D.vtk"};
+        tis.rescale(tis_s);
+        auto x_len = tis.get_maximum().x - tis.get_minimum().x;
         random_rectangle(
-            init_dist, fin.get_minimum(), fin.get_maximum(), cells);
+            init_dist, tis.get_minimum(), tis.get_maximum(), cells);
         auto new_n =
             thrust::remove_if(thrust::host, cells.h_X, cells.h_X + *cells.h_n,
-                [&fin](Cell x) { return fin.test_exclusion(x); });
+                [&tis](Cell x) { return tis.test_exclusion(x); });
         *cells.h_n = std::distance(cells.h_X, new_n);
         for (int i = 0; i < n_0; i++) {  // set cell types
-            if (cells.h_X[i].x < -2)
+            // spot cells appear in leftmost 10% of tissue
+            if (cells.h_X[i].x < tis.get_minimum().x + (x_len * 0.1))
                 cell_type.h_prop[i] = (std::rand() % 100 < 50) ? 1 : 2;
             else
                 cell_type.h_prop[i] = 2;
@@ -592,8 +576,8 @@ int main(int argc, char const* argv[])
 
         // return wall_forces<Cell, boundary_force>(n, d_X, d_dX, 0);
         if (fin_walls)
-            return wall_forces_mult<Cell, boundary_forces_mult>(
-                n, d_X, d_dX, 0);  //, num_walls, wall_normals, wall_offsets);
+            return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX, 0,
+                w_off_s);  //, num_walls, wall_normals, wall_offsets);
     };
 
     cells.copy_to_device();
@@ -653,6 +637,9 @@ int main(int argc, char const* argv[])
             // conditions are met
             cells.take_step<pairwise_force, friction_on_background>(
                 dt, generic_function);
+            if (death_switch)
+                death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                    cells.get_d_n(), cells.d_X, cells.d_n);
         }
 
         if (time_step % int(cont_time / no_frames) == 0) {
