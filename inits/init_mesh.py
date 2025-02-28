@@ -2,21 +2,31 @@ import sys
 from vedo import *
 
 display = True
-extrude = False
+extrude = True
 extrude_z = 0.1  # extrude distance in z direction
 format = 0  # 0: legacy vtk yalla compatible, 1: new vtk (from vedo)
+shape = 1  # 0: 2D fin shape, 1: 2D rectangular shape
 
-# basic 2D fin shape
-verts = [(-1, 0.5, 0), (0.75, 0.5, 0), (0.75, -0.5, 0),
-         (0.2, -0.5, 0), (-1, 0.1, 0)]
-faces = [[0, 1, 2, 3, 4]]
+faces = []
+verts = []
+
+if shape == 0:
+    # 2D fin shape
+    verts = [(-1, 0.5, 0), (0.75, 0.5, 0), (0.75, -0.5, 0),
+             (0.2, -0.5, 0), (-1, 0.1, 0)]
+    faces = [[0, 1, 2, 3, 4]]
+
+if shape == 1:
+    # 2D rectangular shape
+    verts = [(-1, 0.5, 0), (1, 0.5, 0), (1, -0.5, 0), (-1, -0.5, 0)]
+    faces = [[0, 1, 2, 3]]
 
 
 def export_vtk_custom(verts, faces):
     """Export verts and faces manually to legacy vtk"""
 
     # Create the vtk file
-    with open(f"fin_mesh_{'3D' if extrude else '2D'}.vtk",
+    with open(f"shape{shape}_mesh_{'3D' if extrude else '2D'}.vtk",
               "w", encoding="utf-8") as vtk_file:
 
         # Write the header
@@ -74,6 +84,7 @@ if __name__ == "__main__":
     print(f"extrude: {extrude}")
     print(f"extrude_z: {extrude_z}")
     print(f"format: {format}")
+    print(f"shape: {shape}")
 
     if extrude:
         verts, faces = extrude_mesh(verts)  # extrude in z-direction
@@ -87,10 +98,10 @@ if __name__ == "__main__":
         plt = Plotter(axes=1)
         plt.add(f_mesh)
         plt.show(azimuth=-30, elevation=-10, interactive=False)
-        plt.screenshot(f"fin_mesh_{"3D" if extrude else "2D"}.png")
+        plt.screenshot(f"shape{shape}_mesh_{'3D' if extrude else '2D'}.png")
         plt.interactive()
 
     if format == 0:
         export_vtk_custom(f_mesh.vertices, f_mesh.cells)
     elif format == 1:
-        f_mesh.write("fin_mesh.vtk", binary=False)
+        f_mesh.write(f"shape{shape}_mesh.vtk", binary=False)
