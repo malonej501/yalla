@@ -25,3 +25,7 @@ def params_to_header(params: pd.DataFrame):
             f.write(f"const {type_} {param} = {value};\n")
 
         f.write("\n#endif")
+
+if __name__ == "__main__":
+    params = pd.read_csv("../params/default.csv")
+    params_to_header(params)
