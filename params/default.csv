@@ -1,0 +1,50 @@
+param,type,value,description
+r_max,float,0.1,Max interaction distance betwen two cells
+n_max,int,200000,Max no. cells
+noise,float,0.0,Magnitude of noise
+cont_time,int,1000,Simulation duration
+dt,float,0.1,Time step for Euler integration
+no_frames,int,100,No. frames of simulation output to vtk
+tmode,int,3,"condition for initialisation of cells: 0-random disk, 1-regular rectangle, 2-regular rectangle with spot, 3-fin mesh (need 10000 init cells minimum), 4-fin mesh with spot"
+init_dist,float,0.05,mean distance between cells when initialised
+div_dist,float,0.01,distance between parent and child cells
+n_0,int,10000,"Initial number of cells (n.b. depending on the initial condition, this number may need to be a specific multiple)"
+A_init,int,10,% type 1 cells in initial population
+tis_s,float,3,scale factor for init tissue
+fin_walls,bool,true,activate force walls
+w_off_s,float,3,scale factor for wall offsets (fit with tis_s)
+ray_switch,bool,true,different advection strength between fin rays
+n_rays,int,5,number of rays
+s_ray,float,0.1,x width of the rays
+mov_switch,bool,true,cell movement switch
+diff_adh_rep,bool,true,differential adhesion and repulsion switch
+rii,float,0.012,A-A repulsion length scale
+Rii,float,0.0045,A-A repulsion strength
+aii,float,0.019,A-A adhesion length scale
+Aii,float,0.0019,A-A adhesion strength
+rdd,float,0.012,Default repulsion length scale
+Rdd,float,0.0045,Default repulsion strength
+add,float,1,Default adhesion length scale
+Add,float,0,Default adhesion strength
+adv_switch,bool,false,advection switch
+ad_s,float,0.01,default advection strength
+soft_ad_s,float,0.00,advection strength in inter-rays
+prolif_switch,bool,true,proliferation switch
+pmode,int,0,"proliferation rules: 0-no child type switching, 1-B->A switching depending on r_A_birth, 2-A->B switching depending on r_A_birth and if u < uthresh for parent"
+A_div,float,0.005,division rate for T1/A cells
+B_div,float,0.000001,division rate for T2/B cells
+C_div,float,0,division rate for T3/C cells
+r_A_birth,float,0.000,chance of type 2 cells producing type 1 cells
+uthresh,float,0.015,B/t2 cell children will not spawn as A/t1 if the amount of u exceeds this value
+vthresh,float,0.9,B/t2 cells will switch to A/t1 if the amount of v exceeds this value
+mech_thresh,float,0.05,max mech_str under which cells can divide
+cmode,int,0,"chemical behaviour: 0-production and diffusion, 1-Schnackenberg"
+k_prod,float,0.3,production rate of chemical u and v
+k_deg,float,0.1,degredation rate of chemical u and v
+D_u,float,0.6,Diffusion rate of chemical u
+D_v,float,0.05,Diffusion rate of chemical v
+a_u,float,5,Reaction term for chemical u
+b_v,float,0.001,Reaction term for chemical v
+type_switch,bool,false,switch cell types based on chemical amounts
+death_switch,bool,true,allow cells to die based on chemical amounts
+u_death,float,0.7,u threshold for cell type 1 death
