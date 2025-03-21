@@ -12,3 +12,4 @@ run/saves/
 backups
 *.vtk
 *.png
+*.h
