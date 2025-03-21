@@ -14,8 +14,15 @@ rm exec*
 rm output/*
 module load cuda
 
+# generate .h file from default parameters
+source ../venv/bin/activate
+python3 ../sample/pwriter.py
+deactivate
+
 # compile the model
+echo "Compiling..."
 nvcc -std=c++14 -arch=sm_61 ../examples/eggspot.cu -o exec
+echo "Compilation time: $SECONDS seconds"
 
 # remove queue lock file if it exists
 if [ -f /mnt/users/jmalone/.addqueuelock ]; then
