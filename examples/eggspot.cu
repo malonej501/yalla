@@ -19,97 +19,7 @@
 #include "../include/solvers.cuh"
 #include "../include/utils.cuh"
 #include "../include/vtk.cuh"
-
-
-// N.B. distances are in millimeters so 0.001 = 1 micrometer
-
-// global simulation parameters
-const float r_max = 0.1;     // Max interac distance betwen two cells
-const int n_max = 200000;    // Max number of cells
-const float noise = 0.0;     // 0.01;//0.015;//0.005;  // Magnitude of noise
-const int cont_time = 1000;  // Simulation duration
-const float dt = 0.1;        // Time step for Euler integration
-const int no_frames = 100;   // no. frames of simulation output to vtk
-
-// tissue initialisation
-const int tmode = 3;           // condition for initialisation of cells
-                               // 0-random disk,
-                               // 1-regular rectangle,
-                               // 2-regular rectangle with spot,
-                               // 3-fin mesh (need 10000 init cells at least)
-                               // 4-fin mesh with spot
-const float init_dist = 0.05;  // mean distance between cells when initialised
-const float div_dist = 0.01;   // distance between parent and child cells
-const int n_0 = 10000;         // Initial number of cells
-                               // n.b. this number needs to divide equally
-                               // between stripes if using volk init condition
-const int A_init = 10;         // % type 1 cells in initial population
-const float tis_s = 3;         // scale factor for init tissue - applies to 3, 4
-const bool fin_walls = true;   // activate force walls
-const float w_off_s = 3;       // scale factor for wall offsets (fit with tis_s)
-const bool ray_switch = true;  // different advection strength between fin rays
-const int n_rays = 5;          // number of rays
-const float s_ray = 0.1;       // x width of the rays
-
-
-// cell migration parameters
-const bool mov_switch = true;    // cell movement switch
-const bool diff_adh_rep = true;  // differential adhesion and repulsion switch
-const float rii = 0.012;         // A-A repulsion length scale
-const float Rii = 0.0045;        // A-A repulsion strength
-const float aii = 0.019;         // A-A adhesion length scale
-const float Aii = 0.0019;        // A-A adhesion strength
-const float rdd = rii;           // Default repulsion length scale
-const float Rdd = Rii;           // Default repulsion strength
-const float add = 1;             // Default adhesion length scale
-const float Add = 0;             // Default adhesion strength
-
-// advection parameters
-const bool adv_switch = false;  // advection switch
-const float ad_s = 0.01;        // default advection strength
-const float soft_ad_s = 0.00;   // 0.0003;// advection strength in inter-rays
-
-// proliferation parameters
-const bool prolif_switch = true;  // proliferation switch
-const int pmode = 0;              // proliferation rules
-                                  // 0-no child type switching
-                                  // 1-t2->t1 switching depending on r_A_birth
-                                  // 2-t1->t2 switching dep on r_A_birth
-                                  // and ifu < uthresh for parent
-const float A_div = 0.005;        // division rate for T1/A cells
-const float B_div = 0.000001;     // division rate for T2/B cells
-const float C_div = 0;            // division rate for T3/C cells
-const float r_A_birth = 0.000;  // chance of type 2 cells producing type 1 cells
-const float uthresh = 0.015;    // B/t2 cell children will not spawn as A/t1 if
-                                // the amount of u exceeds this value
-const float vthresh = 0.9;      // B/t2 cells will switch to A/t1 if the amount
-                                // of v exceeds this value
-const float mech_thresh = 0.05;  // max mech_str under which cells can divide
-
-// chemical parameters
-const int cmode = 0;  // chemical behaviour
-                      // 0 - production and diffusion
-                      // 1 - Schnackenberg
-// const float D_u = 0.0000000000001;  // Diffusion rate of chemical u
-// const float D_v = 0.0000000008;        // Diffusion rate of chemical v
-const float D_u = 0.7;
-const float D_v = 0.05;
-const float a_u = 5;
-const float b_v = 0.001;
-
-const bool type_switch = false;  // switch cell types based on chemical amounts
-                                 // cell types
-                                 // 1 - A - spot cells
-                                 // 2 - B - non-spot cells
-                                 // 3 - C - static spot cells
-const bool death_switch = true;
-const float u_death = 0.7;  // u threshold for cell type 1 death
-
-// For Gray-Scott
-// const float D_u = 0.01;
-// const float D_v = 0.2;
-// const float D_u = 0.08; //these give much more spaced out spots but require
-// t_max=10000 const float D_v = 2;
+#include "../params/params.h"  // load simulation parameters
 
 // Macro that builds the cell variable type - instead of type float3 we are
 // making a instance of Cell with attributes x,y,z,u,v where u and v are
@@ -138,18 +48,12 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         // Chemical production and degredation
 
         if (cmode == 0) {  // chemical production and degredation
-            // each cell type has a base line production rate of chemical u
-            // or v depending on cell type
-            float k_prod = 0.3;
             dF.u =
                 k_prod * (1.0 - Xi.u) *
                 (d_cell_type[i] == 1 ||
                     d_cell_type[i] == 3);  // cell type 1/3 produces chemical u
             dF.v = k_prod * (1.0 - Xi.v) *
                    (d_cell_type[i] == 2);  // cell type 2 produces chemical v
-
-            // add degredation not dependent on anything
-            float k_deg = 0.1;
             dF.u -= k_deg * (Xi.u);
             dF.v -= k_deg * (Xi.v);
         }
@@ -321,28 +225,8 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
+    // spot cells become static when u is high
     if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 3;
-
-    // if (d_cell_type[i] == 1) {  // spot cells become static when u is high
-    //     // if (d_X[i].u > 0.9) d_cell_type[i] = 3;
-    //     if (d_X[i].u > 0.7) d_cell_type[i] = 2;
-    // }
-
-    // if (d_cell_type[i] == 3) {  // lateral inhibition of static spot clusters
-    //     if (d_X[i].u < 0.85) d_cell_type[i] = 2;
-    // }
-
-    // if (d_cell_type[i] == 1) {  // lateral inhibition of static spot clusters
-    //     if (d_X[i].u > 0.9) d_cell_type[i] = 2;
-    // }
-
-    // if (d_cell_type[i] == 1) {
-    //     if (d_X[i].v > 0.62) d_cell_type[i] = 2;
-    // }
-
-    // if (d_cell_type[i] == 2) {
-    //     if (d_X[i].u > 0.8) d_cell_type[i] = 1;
-    // }
 }
 
 __global__ void death(int n_cells, Cell* d_X, int* d_n_cells)
