@@ -32,7 +32,7 @@ const float dt = 0.1;        // Time step for Euler integration
 const int no_frames = 100;   // no. frames of simulation output to vtk
 
 // tissue initialisation
-const int tmode = 4;           // condition for initialisation of cells
+const int tmode = 3;           // condition for initialisation of cells
                                // 0-random disk,
                                // 1-regular rectangle,
                                // 2-regular rectangle with spot,
@@ -47,10 +47,13 @@ const int A_init = 10;         // % type 1 cells in initial population
 const float tis_s = 3;         // scale factor for init tissue - applies to 3, 4
 const bool fin_walls = true;   // activate force walls
 const float w_off_s = 3;       // scale factor for wall offsets (fit with tis_s)
-const bool fin_rays = true;    // different advection strength between fin rays
+const bool ray_switch = true;  // different advection strength between fin rays
+const int n_rays = 5;          // number of rays
+const float s_ray = 0.1;       // x width of the rays
+
 
 // cell migration parameters
-const bool mov = true;           // cell movement switch
+const bool mov_switch = true;    // cell movement switch
 const bool diff_adh_rep = true;  // differential adhesion and repulsion switch
 const float rii = 0.012;         // A-A repulsion length scale
 const float Rii = 0.0045;        // A-A repulsion strength
@@ -62,20 +65,20 @@ const float add = 1;             // Default adhesion length scale
 const float Add = 0;             // Default adhesion strength
 
 // advection parameters
-const bool adv = true;           // advection switch
-const float ad_s = 0.001;        // default advection strength
-const float soft_ad_s = 0.0005;  // 0.0003;// advection strength in inter-rays
+const bool adv_switch = false;  // advection switch
+const float ad_s = 0.01;        // default advection strength
+const float soft_ad_s = 0.00;   // 0.0003;// advection strength in inter-rays
 
 // proliferation parameters
-const bool prolif = true;       // proliferation switch
-const int pmode = 0;            // proliferation rules
-                                // 0-no child type switching
-                                // 1-t2->t1 switching depending on r_A_birth
-                                // 2-t1->t2 switching dep on r_A_birth
-                                // and ifu < uthresh for parent
-const float A_div = 0.005;      // division rate for T1/A cells
-const float B_div = 0.000001;   // division rate for T2/B cells
-const float C_div = 0;          // division rate for T3/C cells
+const bool prolif_switch = true;  // proliferation switch
+const int pmode = 0;              // proliferation rules
+                                  // 0-no child type switching
+                                  // 1-t2->t1 switching depending on r_A_birth
+                                  // 2-t1->t2 switching dep on r_A_birth
+                                  // and ifu < uthresh for parent
+const float A_div = 0.005;        // division rate for T1/A cells
+const float B_div = 0.000001;     // division rate for T2/B cells
+const float C_div = 0;            // division rate for T3/C cells
 const float r_A_birth = 0.000;  // chance of type 2 cells producing type 1 cells
 const float uthresh = 0.015;    // B/t2 cell children will not spawn as A/t1 if
                                 // the amount of u exceeds this value
@@ -89,7 +92,7 @@ const int cmode = 0;  // chemical behaviour
                       // 1 - Schnackenberg
 // const float D_u = 0.0000000000001;  // Diffusion rate of chemical u
 // const float D_v = 0.0000000008;        // Diffusion rate of chemical v
-const float D_u = 1;
+const float D_u = 0.7;
 const float D_v = 0.05;
 const float a_u = 5;
 const float b_v = 0.001;
@@ -100,7 +103,7 @@ const bool type_switch = false;  // switch cell types based on chemical amounts
                                  // 2 - B - non-spot cells
                                  // 3 - C - static spot cells
 const bool death_switch = true;
-const float u_death = 0.6;  // u threshold for cell type 1 death
+const float u_death = 0.7;  // u threshold for cell type 1 death
 
 // For Gray-Scott
 // const float D_u = 0.01;
@@ -116,11 +119,10 @@ const float u_death = 0.6;  // u threshold for cell type 1 death
 MAKE_PT(Cell, u, v);
 
 // define global variables for the GPU
-__device__ float* d_mechanical_strain;
+__device__ float* d_mech_str;
 __device__ int* d_cell_type;  // cell_type: A=1, B=2, DEAD=0
 __device__ Cell* d_W;  // random number from Weiner process for stochasticity
-__device__ int* d_ngs_type_A;  // no. A cells in neighbourhood
-__device__ int* d_ngs_type_B;  // no. B cells in neighbourhood
+__device__ bool* d_in_ray;  // whether a cell is in a ray
 
 template<typename Pt>
 __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
@@ -141,7 +143,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
             float k_prod = 0.3;
             dF.u =
                 k_prod * (1.0 - Xi.u) *
-                (d_cell_type[i] == 1 or
+                (d_cell_type[i] == 1 ||
                     d_cell_type[i] == 3);  // cell type 1/3 produces chemical u
             dF.v = k_prod * (1.0 - Xi.v) *
                    (d_cell_type[i] == 2);  // cell type 2 produces chemical v
@@ -174,16 +176,10 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // dF.u = -0.01 * r.u;
     // dF.v = -0.05 * r.v;
 
-    if (dist < 0.075) {           // the radius of the inner disc
-        if (d_cell_type[j] == 1)  // count no. each cell type in neighbourhood
-            d_ngs_type_A[i] += 1;
-        else
-            d_ngs_type_B[i] += 1;
-    }
 
     // Mechanical forces
 
-    if (!mov) return dF;  // if cell movement is off, return no forces
+    if (!mov_switch) return dF;  // if cell movement is off, return no forces
 
     // default adhesion and repulsion vals for cell interactions
     float Adh = Add;
@@ -214,8 +210,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     float term2 = Rep / rep * expf(-dist / rep);
     float F = term1 - term2;
     // printf("%f\n", F);
-    d_mechanical_strain[i] -=
-        F;  // mechanical strain is the sum of forces on the cell
+    d_mech_str[i] -= F;  // mechanical strain is the sum of forces on the cell
 
     dF.x -= r.x * F / dist;
     dF.y -= r.y * F / dist;
@@ -227,37 +222,6 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // adding to the values in the current time step This function is in solvers
     // in the euler_step function
 
-    // Advection
-    float rays[4][2] = {
-        {0.1, 0.3},
-        {0.4, 0.6},
-        {0.7, 0.9},
-        {1.0, 1.2},
-    };
-
-
-    // float scaling_factor = 5;
-    // Scale the array elements
-    for (int i = 0; i < 4; ++i) {
-        // for (int j = 0; j < 2; ++j) { rays[i][j] *= scaling_factor; }
-        for (int j = 0; j < 2; ++j) { rays[i][j] += i; }
-    }
-
-    if (adv and d_cell_type[i] == 1) {  // only type 1 one cells advect
-        float ad = ad_s;                // default advection strength
-
-        if (fin_rays) {
-            for (int k = 0; k < 4; ++k) {  // Check if the cell is within any of
-                                           // the fin_rays ranges
-                if (Xi.x >= rays[k][0] and Xi.x <= rays[k][1]) {
-                    ad = soft_ad_s;  // change advection amount if within range
-                    break;
-                }
-            }
-        }
-
-        dF.x += ad;  // apply advection
-    }
     return dF;
 }
 
@@ -288,19 +252,19 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
         return;  // return nothing if the no. cells starts to approach the max
 
     if (d_cell_type[i] == 1) {
-        if (d_mechanical_strain[i] > mech_thresh) return;
+        if (d_mech_str[i] > mech_thresh) return;
         // if (d_X[i].u > 0.85) return;
         if (curand_uniform(&d_state[i]) > (A_div * dt)) return;
     }
 
     if (d_cell_type[i] == 2) {
-        if (d_mechanical_strain[i] > mech_thresh) return;
+        if (d_mech_str[i] > mech_thresh) return;
         if (curand_uniform(&d_state[i]) > (B_div * dt)) return;
     }
 
     if (d_cell_type[i] == 3) {
-        if (d_mechanical_strain[i] > mech_thresh) return;
-        if (curand_uniform(&d_state[i]) > (B_div * dt)) return;
+        if (d_mech_str[i] > mech_thresh) return;
+        if (curand_uniform(&d_state[i]) > (A_div * dt)) return;
     }
 
 
@@ -316,7 +280,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
 
     d_old_v[n] = d_old_v[i];
 
-    d_mechanical_strain[n] = 0.0;
+    d_mech_str[n] = 0.0;
 
 
     // set child cell types
@@ -357,7 +321,7 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
-    if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 2;
+    if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 3;
 
     // if (d_cell_type[i] == 1) {  // spot cells become static when u is high
     //     // if (d_X[i].u > 0.9) d_cell_type[i] = 3;
@@ -387,47 +351,54 @@ __global__ void death(int n_cells, Cell* d_X, int* d_n_cells)
     if (i >= n_cells) return;
 
     if (d_X[i].u > u_death &&
-        // if (d_X[i].u > (d_X[i].x / 4) and
-        d_cell_type[i] == 1) {            // die if type 1 and u high
+        (d_cell_type[i] == 1 ||
+            d_cell_type[i] == 3)) {       // die if type 1/3 and u high
         int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
         // overwrite cell i with last cell in d_X, stop if only one cell left
         if (i < n) {
             d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
             d_cell_type[i] = d_cell_type[n - 1];
-            d_mechanical_strain[i] = d_mechanical_strain[n - 1];
+            d_mech_str[i] = d_mech_str[n - 1];
         }
     }
 }
 
-__global__ void find_min_max_x(
-    const Cell* d_cells, int num_cells, float* d_min_x, float* d_max_x)
+void init_rays(Mesh& tis, float rays[n_rays][2])
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= num_cells) return;
-    // I think there is a method to do this for objects of type Mesh - like
-    // .get_minimum()
+    // float rays[n_ray][2];  // start and end of each ray
+    float min_x = tis.get_minimum().x;
+    float max_x = tis.get_maximum().x;
+    float step = (max_x - min_x) / (n_rays - 1);
 
-    __shared__ float shared_min_x[256];
-    __shared__ float shared_max_x[256];
-
-    shared_min_x[threadIdx.x] = d_cells[idx].x;
-    shared_max_x[threadIdx.x] = d_cells[idx].x;
-
-    __syncthreads();
-
-    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        if (threadIdx.x < stride) {
-            shared_min_x[threadIdx.x] = fminf(
-                shared_min_x[threadIdx.x], shared_min_x[threadIdx.x + stride]);
-            shared_max_x[threadIdx.x] = fmaxf(
-                shared_max_x[threadIdx.x], shared_max_x[threadIdx.x + stride]);
-        }
-        __syncthreads();
+    for (int i = 0; i < n_rays; i++) {
+        float x1 = min_x + i * step;
+        float x2 = x1 + s_ray;
+        // x_pairs.push_back({x1, x2});
+        rays[i][0] = x1;
+        rays[i][1] = x2;
     }
+}
 
-    if (threadIdx.x == 0) {
-        atomicMin((int*)d_min_x, __float_as_int(shared_min_x[0]));
-        atomicMax((int*)d_max_x, __float_as_int(shared_max_x[0]));
+__global__ void advection(
+    int n_cells, const Cell* d_X, Cell* d_dX, const float (*rays)[2])
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n_cells) return;
+
+    if (d_cell_type[i] == 1) {  // only type 1 one cells advect
+        float ad = ad_s;        // default advection strength
+        if (ray_switch) {
+            for (int k = 0; k < n_rays; ++k) {
+                d_in_ray[i] = false;
+                if (d_X[i].x >= rays[k][0] && d_X[i].x <= rays[k][1]) {
+                    d_in_ray[i] = true;
+                    ad = soft_ad_s;  // soft_ad if in ray
+                    break;
+                }
+            }
+            // if (!d_in_ray[i]) ad = soft_ad_s;  // soft_ad if not in ray
+        }
+        d_dX[i].x += ad;
     }
 }
 
@@ -441,46 +412,38 @@ int main(int argc, char const* argv[])
     */
     curandState* d_state;  // define the random number generator on the GPu
     cudaMalloc(&d_state,
-        n_max * sizeof(curandState));  // allocate GPU memory according to the
-                                       // number of cells
+        n_max * sizeof(curandState));  // allocate GPU memory according to
+                                       // no. cells
     auto seed =
         time(NULL);  // random number seed - coupled to the time on your machine
     setup_rand_states<<<(n_max + 32 - 1) / 32, 32>>>(
-        n_max, seed, d_state);  // configuring the random number generator on
-                                // the GPU (provided by utils.cuh)
+        n_max, seed, d_state);  // configuring the random number generator
+                                // on the GPU (provided by utils.cuh)
 
     /* create host variables*/
-    // Wiener process
-    Property<Cell> W{
-        n_max, "wiener_process"};  // define a property for the weiner process
-    cudaMemcpyToSymbol(d_W, &W.d_prop,
-        sizeof(d_W));  // connect the global property defined on the GPU to the
-                       // property defined in this function
-
-    // Mechanical strain
-    Property<float> mechanical_strain{
-        n_max, "mech_str"};  // create an instance of the property
-    cudaMemcpyToSymbol(d_mechanical_strain, &mechanical_strain.d_prop,
-        sizeof(
-            d_mechanical_strain));  // connect the above instance (on the host)
-                                    // to the global variable on the device
-
-    // No. iri in neighbourhood
-    Property<int> ngs_type_A{
-        n_max, "ngs_type_A"};  // create an instance of the property
-    cudaMemcpyToSymbol(d_ngs_type_A, &ngs_type_A.d_prop, sizeof(d_ngs_type_A));
-    // No. xan in neighbourhood
-    Property<int> ngs_type_B{
-        n_max, "ngs_type_B"};  // create an instance of the property
-    cudaMemcpyToSymbol(d_ngs_type_B, &ngs_type_B.d_prop, sizeof(d_ngs_type_B));
-
-    // Cell type labels
-    Property<int> cell_type{n_max, "cell_type"};
+    // you first create an instance of the Property class on the host, then
+    // you connect it to the global variable defined on the device with
+    Property<Cell> W{n_max, "wiener_process"};  // weiner process random number
+    cudaMemcpyToSymbol(d_W, &W.d_prop, sizeof(d_W));
+    Property<float> mech_str{n_max, "mech_str"};
+    cudaMemcpyToSymbol(d_mech_str, &mech_str.d_prop, sizeof(d_mech_str));
+    Property<int> cell_type{n_max, "cell_type"};  // cell type labels
     cudaMemcpyToSymbol(d_cell_type, &cell_type.d_prop, sizeof(d_cell_type));
+    Property<bool> in_ray{n_max, "in_ray"};  // whether cell is in ray or not
+    cudaMemcpyToSymbol(d_in_ray, &in_ray.d_prop, sizeof(d_in_ray));
 
     // Initial conditions
-    Solution<Cell, Gabriel_solver> cells{n_max, 50, r_max};
+    Solution<Cell, Gabriel_solver> cells{n_max, 50, r_max};  // intialise solver
     *cells.h_n = n_0;
+
+    float rays[n_rays][2];  // initialise rays with default values
+    for (int i = 0; i < n_rays; i++) {
+        rays[i][0] = 0;
+        rays[i][1] = 0;
+    }
+    // Allocate memory for rays on the device
+    float(*d_rays)[2];
+    cudaMalloc(&d_rays, n_rays * 2 * sizeof(float));
 
     if (tmode == 0) {
         random_disk_z(init_dist, cells);  // initialise random disk with mean
@@ -494,8 +457,8 @@ int main(int argc, char const* argv[])
     }
     if (tmode == 1) {
         regular_rectangle(init_dist, std::round(std::sqrt(n_0) / 10) * 10,
-            cells);  // initialise rectangle specifying the no. cells along the
-                     // x axis
+            cells);  // initialise rectangle specifying the no. cells along
+                     // the x axis
         for (int i = 0; i < n_0; i++) {
             cell_type.h_prop[i] = (std::rand() % 100 < A_init) ? 1 : 2;
         }
@@ -543,10 +506,16 @@ int main(int argc, char const* argv[])
             else
                 cell_type.h_prop[i] = 2;
         }
+        init_rays(tis, rays);
+        // Print the values of rays after initialization
+        std::cout << "Rays after initialization:" << std::endl;
+        for (int i = 0; i < n_rays; i++) {
+            std::cout << "Ray " << i << ": (" << rays[i][0] << ", "
+                      << rays[i][1] << ")" << std::endl;
+        }
     }
 
-    // initialise random chemical amounts
-    for (int i = 0; i < n_0; i++) {
+    for (int i = 0; i < n_0; i++) {  // initialise chemical amounts
         // cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
         // cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
         cells.h_X[i].u = 0;
@@ -554,12 +523,13 @@ int main(int argc, char const* argv[])
     }
 
     // Initialise properties and k with zeroes
-    for (int i = 0; i < n_max; i++) {  // initialise with zeroes, for loop
-                                       // step size is set to 1 with i++
-        mechanical_strain.h_prop[i] = 0;
-        ngs_type_A.h_prop[i] = 0;
-        ngs_type_B.h_prop[i] = 0;
+    for (int i = 0; i < n_max; i++) {  // initialise with zeroes
+        mech_str.h_prop[i] = 0;
+        in_ray.h_prop[i] = false;
     }
+
+    cudaMemcpy(
+        d_rays, rays, n_rays * 2 * sizeof(float), cudaMemcpyHostToDevice);
 
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
                                 Cell* d_dX) {  // then set the mechanical forces
@@ -567,26 +537,24 @@ int main(int argc, char const* argv[])
         // Set these properties to zero after every timestep so they
         // don't accumulate Called every timesetep, allows you to add
         // custom forces at every timestep e.g. advection
-        thrust::fill(thrust::device, mechanical_strain.d_prop,
-            mechanical_strain.d_prop + cells.get_d_n(), 0.0);
-        thrust::fill(thrust::device, ngs_type_A.d_prop,
-            ngs_type_A.d_prop + cells.get_d_n(), 0);
-        thrust::fill(thrust::device, ngs_type_B.d_prop,
-            ngs_type_B.d_prop + cells.get_d_n(), 0);
+        thrust::fill(thrust::device, mech_str.d_prop,
+            mech_str.d_prop + cells.get_d_n(), 0.0);
+        thrust::fill(thrust::device, in_ray.d_prop,
+            in_ray.d_prop + cells.get_d_n(), false);
 
         // return wall_forces<Cell, boundary_force>(n, d_X, d_dX, 0);
+        if (adv_switch)
+            advection<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                cells.get_d_n(), d_X, d_dX, d_rays);
         if (fin_walls)
             return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX, 0,
                 w_off_s);  //, num_walls, wall_normals, wall_offsets);
     };
 
     cells.copy_to_device();
-    mechanical_strain.copy_to_device();
+    mech_str.copy_to_device();
     cell_type.copy_to_device();
-    ngs_type_A.copy_to_device();
-    ngs_type_B.copy_to_device();
-    // d_wall_normals.copy_to_device();
-    // d_wall_offsets.copy_to_device();
+    in_ray.copy_to_device();
 
     Vtk_output output{"out"};  // create instance of Vtk_output class
 
@@ -606,16 +574,14 @@ int main(int argc, char const* argv[])
 
     // write out initial condition
     cells.copy_to_host();
-    mechanical_strain.copy_to_host();
+    mech_str.copy_to_host();
     cell_type.copy_to_host();
-    ngs_type_A.copy_to_host();
-    ngs_type_B.copy_to_host();
+    in_ray.copy_to_host();
 
     output.write_positions(cells);
-    output.write_property(mechanical_strain);
+    output.write_property(mech_str);
     output.write_property(cell_type);
-    output.write_property(ngs_type_A);
-    output.write_property(ngs_type_B);
+    output.write_property(in_ray);
     output.write_field(cells, "u", &Cell::u);  // write u of each cell to vtk
     output.write_field(cells, "v", &Cell::v);
 
@@ -627,7 +593,7 @@ int main(int argc, char const* argv[])
                 cells.get_d_n(),
                 d_state);  // generate random noise which we will use later
                            // on to move the cells
-            if (prolif)
+            if (prolif_switch)
                 proliferation<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
                     cells.d_n);  // simulate proliferation
@@ -644,16 +610,14 @@ int main(int argc, char const* argv[])
 
         if (time_step % int(cont_time / no_frames) == 0) {
             cells.copy_to_host();
-            mechanical_strain.copy_to_host();
+            mech_str.copy_to_host();
             cell_type.copy_to_host();
-            ngs_type_A.copy_to_host();
-            ngs_type_B.copy_to_host();
+            in_ray.copy_to_host();
 
             output.write_positions(cells);
-            output.write_property(mechanical_strain);
+            output.write_property(mech_str);
             output.write_property(cell_type);
-            output.write_property(ngs_type_A);
-            output.write_property(ngs_type_B);
+            output.write_property(in_ray);
             output.write_field(cells, "u",
                 &Cell::u);  // write the u part of each cell to vtk
             output.write_field(cells, "v", &Cell::v);
