@@ -286,7 +286,7 @@ __global__ void advection(
     }
 }
 
-int main(int argc, char const* argv[])
+int tissue_sim(int argc, char const* argv[])
 {
     std::cout << std::fixed
               << std::setprecision(6);  // set precision for floats
@@ -509,3 +509,8 @@ int main(int argc, char const* argv[])
     }
     return 0;
 }
+
+// only compile main when this file is not included as library elsewhere
+#ifndef COMPILE_AS_LIBRARY
+int main(int argc, char const* argv[]) { return tissue_sim(argc, argv); }
+#endif
