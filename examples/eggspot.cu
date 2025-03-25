@@ -27,6 +27,7 @@
 // MAKE_PT(Cell); // float3 i .x .y .z .u .v .whatever
 // to use MAKE_PT(Cell) replace every instance of float3 with Cell
 MAKE_PT(Cell, u, v);
+Pm h_pm;  // host variable for simulation parameters
 
 // define global variables for the GPU
 __device__ float* d_mech_str;
@@ -102,8 +103,8 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
             (d_cell_type[i] == 3 and d_cell_type[j] == 1)) {
             Adh = d_pm.Aii;  // A-A interact with different adh and rep vals
             adh = d_pm.aii;
-            Rep = d_pm.rii;
-            rep = d_pm.Rii;
+            Rep = d_pm.Rii;
+            rep = d_pm.rii;
         }
     }
 
@@ -506,7 +507,7 @@ int tissue_sim(int argc, char const* argv[])
                     cells.get_d_n(), cells.d_X, cells.d_n);
         }
 
-        if (time_step % int(h_pm.cont_time / d_pm.no_frames) == 0) {
+        if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
             cells.copy_to_host();
             mech_str.copy_to_host();
             cell_type.copy_to_host();
@@ -524,7 +525,8 @@ int tissue_sim(int argc, char const* argv[])
     return 0;
 }
 
-// only compile main when this file is not included as library elsewhere
+// compile tissue_sim as main when this file is not included as library
+// elsewhere
 #ifndef COMPILE_AS_LIBRARY
 int main(int argc, char const* argv[]) { return tissue_sim(argc, argv); }
 #endif
