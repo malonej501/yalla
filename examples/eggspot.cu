@@ -27,7 +27,6 @@
 // MAKE_PT(Cell); // float3 i .x .y .z .u .v .whatever
 // to use MAKE_PT(Cell) replace every instance of float3 with Cell
 MAKE_PT(Cell, u, v);
-Pm h_pm;  // host variable for simulation parameters
 
 // define global variables for the GPU
 __device__ float* d_mech_str;
@@ -292,7 +291,7 @@ __global__ void advection(
     }
 }
 
-int tissue_sim(int argc, char const* argv[])
+int tissue_sim(int argc, char const* argv[], int step = 0)
 {
     std::cout << std::fixed
               << std::setprecision(6);  // set precision for floats
@@ -455,7 +454,8 @@ int tissue_sim(int argc, char const* argv[])
     cell_type.copy_to_device();
     in_ray.copy_to_device();
 
-    Vtk_output output{"out"};  // create instance of Vtk_output class
+    Vtk_output output{"out_" + std::to_string(step)};
+    // create instance of Vtk_output class
 
 
     /* the neighbours are initialised with 0. However, you want to use them
