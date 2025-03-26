@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import alphashape
 from sklearn.cluster import DBSCAN
+from pyvirtualdisplay import Display
 
 # Default parameters
 
@@ -22,6 +23,17 @@ ax = True # show axes
 
 # DBSCAN parameters
 eps = 0.05 # maximum distance between two samples for one to be considered as in the neighborhood of the other
+
+def render_frame(vtks, folder_path, walk_id, step):
+    
+    display = Display(visible=0, size=(1366, 768)) # virtual display for offscreen rendering
+    display.start()
+    vtk = vtks[-1] # select final frame
+    cmap = "viridis"
+    points = Points(vtk).point_size(pt_size * zoom).cmap(cmap, c_prop)
+    plt = show(points, offscreen=True)
+    plt.screenshot(f"{folder_path}/out_{walk_id}_{step}_{len(vtks)-1}.png")
+    display.stop()
 
 def render_movie(vtks, folder_path):
 
@@ -521,7 +533,10 @@ def print_help():
         -f [function]   Pass which function you want to perform:
                         0   ...render moive (default)
                         1   ...cluster spot cells and get spot stats
-        -z [zoom]       Zoom factor for camera view (0.6 is default)      
+                        2   ...screenshot of last vtk file
+        -z [zoom]       Zoom factor for camera view (0.6 is default)
+        -w [walk id]    id of the walk being rendered
+        -s [step]       Step of the walk being rendered
         """
     
     print(help_message)
@@ -543,15 +558,24 @@ if __name__ == "__main__":
             func = int(args[args.index("-f") + 1])
         if "-z" in args:
             zoom = float(args[args.index("-z") + 1])
+        if "-w" in args:
+            walk_id = int(args[args.index("-w") + 1])
+        if "-s" in args:
+            step = int(args[args.index("-s") + 1])
             
 
-        folder_path = f'/home/jmalone/GitHub/yalla/run/saves/{output_folder}' # directory
+        folder_path = f'../run/{output_folder}' # directory
 
-        vtks = load(f"{folder_path}/*.vtk")
+        
         if func == 0:
+            vtks = load(f"{folder_path}/*.vtk")
             render_movie(vtks, folder_path)
         elif func == 1:
+            vtks = load(f"{folder_path}/*.vtk")
             pattern_stats(vtks, folder_path)
+        elif func == 2:
+            vtks = load(f"{folder_path}/out_{walk_id}_{step}_*.vtk")
+            render_frame(vtks, folder_path, walk_id, step)
 
 
 
