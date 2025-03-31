@@ -51,12 +51,18 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         // Chemical production and degredation
 
         if (d_pm.cmode == 0) {  // chemical production and degredation
-            dF.u =
-                d_pm.k_prod * (1.0 - Xi.u) *
-                (d_cell_type[i] == 1 ||
-                    d_cell_type[i] == 3);  // cell type 1/3 produces chemical u
+            dF.u = d_pm.k_prod * (1.0 - Xi.u) *
+                   (d_cell_type[i] == 1 ||
+                       d_cell_type[i] == 3);  // cell type 1/3 produce u
             dF.v = d_pm.k_prod * (1.0 - Xi.v) *
                    (d_cell_type[i] == 2);  // cell type 2 produces chemical v
+            // dF.u = d_pm.k_prod * ((d_cell_type[i] == 1 || d_cell_type[i] ==
+            // 3) &
+            //                          Xi.u < 1);  // stop making u when it
+            //                                      //   reaches 1
+            // dF.v = d_pm.k_prod *
+            //        ((d_cell_type[i] == 2) & Xi.v < 1);  // stop making v when
+            // it reaches 1
             dF.u -= d_pm.k_deg * (Xi.u);
             dF.v -= d_pm.k_deg * (Xi.v);
         }
@@ -291,7 +297,7 @@ __global__ void advection(
     }
 }
 
-int tissue_sim(int argc, char const* argv[], int step = 0)
+int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 {
     std::cout << std::fixed
               << std::setprecision(6);  // set precision for floats
@@ -454,7 +460,8 @@ int tissue_sim(int argc, char const* argv[], int step = 0)
     cell_type.copy_to_device();
     in_ray.copy_to_device();
 
-    Vtk_output output{"out_" + std::to_string(step)};
+    Vtk_output output{
+        "out_" + std::to_string(walk_id) + "_" + std::to_string(step)};
     // create instance of Vtk_output class
 
 
