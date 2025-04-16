@@ -32,9 +32,10 @@ MAKE_PT(Cell, u, v);
 __device__ float* d_mech_str;
 __device__ int* d_cell_type;  // cell_type: A=1, B=2, DEAD=0
 __device__ Cell* d_W;  // random number from Weiner process for stochasticity
-__device__ bool* d_in_ray;  // whether a cell is in a ray
-__device__ Pm d_pm;         // simulation parameters (host h_pm)
-
+__device__ bool* d_in_ray;    // whether a cell is in a ray
+__device__ Pm d_pm;           // simulation parameters (host h_pm)
+__device__ float3 d_tis_min;  // min coordinate of tissue mesh
+__device__ float3 d_tis_max;  // max coordinate of tissue mesh
 
 template<typename Pt>
 __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
@@ -80,7 +81,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     }
 
     // Diffusion
-    dF.u = -d_pm.D_u * r.u;
+    dF.u = -d_pm.D_u * r.u;  // r = Xi - Xj solvers.cuh line 448
     dF.v = -d_pm.D_v * r.v;
     // dF.u = -Xi.x * r.u * 0.01;
     // dF.v = -Xi.y * r.v * 0.01;
@@ -236,7 +237,10 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
     if (i >= n_cells) return;
 
     // spot cells become static when u is high
-    if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 3;
+    // if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 3;
+    float top_y = d_tis_max.y - (0.1 * (d_tis_max.y - d_tis_min.y));
+    if (d_cell_type[i] == 1 && d_X[i].u > 0.5 && d_X[i].y < top_y)
+        d_cell_type[i] = 3;  // don't switch if still in top 10% of tissue
 }
 
 __global__ void death(int n_cells, Cell* d_X, int* d_n_cells)
@@ -261,39 +265,60 @@ void init_rays(Mesh& tis, float rays[100][2])  // maximum of 100 rays
 {
     // host function for initialising rays
     // float rays[n_ray][2];  // start and end of each ray
-    float min_x = tis.get_minimum().x;
-    float max_x = tis.get_maximum().x;
-    float step = (max_x - min_x) / (h_pm.n_rays - 1);
+    float p_min, p_max;
+    if (h_pm.ray_dir == 0) {
+        p_min = tis.get_minimum().x;
+        p_max = tis.get_maximum().x;
+    }
+    if (h_pm.ray_dir == 1) {
+        p_min = tis.get_minimum().y;
+        p_max = tis.get_maximum().y;
+    }
+    float step;
+    step = (p_max - p_min) / (h_pm.n_rays - 1);
+    if (h_pm.n_rays < 2)
+        step = (p_max - p_min) / 2;  // if only one ray, set to middle
 
     for (int i = 0; i < h_pm.n_rays; i++) {
-        float x1 = min_x + i * step;
-        float x2 = x1 + h_pm.s_ray;
+        float p1 = p_min + i * step;  // start of ray either x or y line
+        float p2 = p1 + (h_pm.s_ray * (p_max - p_min));  // scale by tissue size
         // x_pairs.push_back({x1, x2});
-        rays[i][0] = x1;
-        rays[i][1] = x2;
+        rays[i][0] = p1;
+        rays[i][1] = p2;
     }
 }
 
-__global__ void advection(
-    int n_cells, const Cell* d_X, Cell* d_dX, const float (*rays)[2])
+__global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
+    const float (*rays)[2], int time_step)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
     if (d_cell_type[i] == 1) {  // only type 1 one cells advect
-        float ad = d_pm.ad_s;   // default advection strength
+        float norm_x = (d_X[i].x - d_tis_min.x) /
+                       (d_tis_max.x - d_tis_min.x);  // % along x axis
+        float ad_time =
+            norm_x * d_pm.cont_time * 0.5;  // wait time proportional to norm_x
+
+        float ad = d_pm.ad_s;  // default advection strength
+        if (d_pm.ad_func == 1 && time_step < ad_time) ad = 0;
+
         if (d_pm.ray_switch) {
             for (int k = 0; k < d_pm.n_rays; ++k) {
                 d_in_ray[i] = false;
-                if (d_X[i].x >= rays[k][0] && d_X[i].x <= rays[k][1]) {
+                float pos;
+                if (d_pm.ray_dir == 0) pos = d_X[i].x;
+                if (d_pm.ray_dir == 1) pos = d_X[i].y;
+                if (pos >= rays[k][0] && pos <= rays[k][1]) {
                     d_in_ray[i] = true;
                     ad = d_pm.soft_ad_s;  // soft_ad if in ray
-                    break;
+                    if (d_pm.ad_func == 1 && time_step < ad_time) ad = 0;
+                    break;  // A-P time delay
                 }
             }
-            // if (!d_in_ray[i]) ad = d_pm.soft_ad_s;  // soft_ad if not in ray
         }
-        d_dX[i].x += ad;
+        if (d_pm.ad_dir == 0) d_dX[i].x += ad;  // +ve x direction
+        if (d_pm.ad_dir == 1) d_dX[i].y -= ad;  // -ve y direction
     }
 }
 
@@ -325,10 +350,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     cudaMemcpyToSymbol(d_mech_str, &mech_str.d_prop, sizeof(d_mech_str));
     Property<int> cell_type{h_pm.n_max, "cell_type"};  // cell type labels
     cudaMemcpyToSymbol(d_cell_type, &cell_type.d_prop, sizeof(d_cell_type));
-    Property<bool> in_ray{
-        h_pm.n_max, "in_ray"};  // whether cell is in ray or not
+    Property<bool> in_ray{h_pm.n_max, "in_ray"};  // whether cell in ray or not
     cudaMemcpyToSymbol(d_in_ray, &in_ray.d_prop, sizeof(d_in_ray));
-    cudaMemcpyToSymbol(d_pm, &h_pm, sizeof(Pm));
+    cudaMemcpyToSymbol(d_pm, &h_pm, sizeof(Pm));  // copy host params
 
     // Initial conditions
     Solution<Cell, Gabriel_solver> cells{
@@ -341,7 +365,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         rays[i][1] = 0;
     }
     // Allocate memory for rays on the device
-    float(*d_rays)[2];
+    float (*d_rays)[2];
     cudaMalloc(&d_rays, h_pm.n_rays * 2 * sizeof(float));
 
     if (h_pm.tmode == 0) {
@@ -380,6 +404,10 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         3) {  // cut the tissue mesh out of a random cloud of cells
         Mesh tis{"../inits/shape1_mesh_3D.vtk"};
         tis.rescale(h_pm.tis_s);  // expand the mesh to fit to the boundaries
+        auto tis_min = tis.get_minimum();
+        auto tis_max = tis.get_maximum();
+        cudaMemcpyToSymbol(d_tis_min, &tis_min, sizeof(float3));  // tis min
+        cudaMemcpyToSymbol(d_tis_max, &tis_max, sizeof(float3));  // tis max
         random_rectangle(
             h_pm.init_dist, tis.get_minimum(), tis.get_maximum(), cells);
         auto new_n =
@@ -396,6 +424,10 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     if (h_pm.tmode == 4) {  // cut the fin mesh out of a random cloud of cells
         Mesh tis{"../inits/shape1_mesh_3D.vtk"};
         tis.rescale(h_pm.tis_s);
+        auto tis_min = tis.get_minimum();
+        auto tis_max = tis.get_maximum();
+        cudaMemcpyToSymbol(d_tis_min, &tis_min, sizeof(float3));  // tis min
+        cudaMemcpyToSymbol(d_tis_max, &tis_max, sizeof(float3));  // tis max
         auto x_len = tis.get_maximum().x - tis.get_minimum().x;
         random_rectangle(
             h_pm.init_dist, tis.get_minimum(), tis.get_maximum(), cells);
@@ -418,6 +450,36 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                       << rays[i][1] << ")" << std::endl;
         }
     }
+    if (h_pm.tmode == 5) {  // fin with spot aggregation at top
+        Mesh tis{"../inits/shape1_mesh_3D.vtk"};
+        tis.rescale(h_pm.tis_s);
+        auto tis_min = tis.get_minimum();
+        auto tis_max = tis.get_maximum();
+        cudaMemcpyToSymbol(d_tis_min, &tis_min, sizeof(float3));  // tis min
+        cudaMemcpyToSymbol(d_tis_max, &tis_max, sizeof(float3));  // tis max
+        auto y_len = tis.get_maximum().y - tis.get_minimum().y;
+        random_rectangle(
+            h_pm.init_dist, tis.get_minimum(), tis.get_maximum(), cells);
+        auto new_n =
+            thrust::remove_if(thrust::host, cells.h_X, cells.h_X + *cells.h_n,
+                [&tis](Cell x) { return tis.test_exclusion(x); });
+        *cells.h_n = std::distance(cells.h_X, new_n);
+        for (int i = 0; i < h_pm.n_0; i++) {  // set cell types
+            // spot cells appear in topmost 10% of tissue
+            if (cells.h_X[i].y > tis.get_maximum().y - (y_len * 0.1))
+                cell_type.h_prop[i] = (std::rand() % 100 < 50) ? 1 : 2;
+            else
+                cell_type.h_prop[i] = 2;
+        }
+        init_rays(tis, rays);
+        // Print the values of rays after initialization
+        std::cout << "Rays after initialization:" << std::endl;
+        for (int i = 0; i < h_pm.n_rays; i++) {
+            std::cout << "Ray " << i << ": (" << rays[i][0] << ", "
+                      << rays[i][1] << ")" << std::endl;
+        }
+    }
+
 
     for (int i = 0; i < h_pm.n_0; i++) {  // initialise chemical amounts
         // cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
@@ -432,9 +494,11 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         in_ray.h_prop[i] = false;
     }
 
+    // Copy the ray data to the device
     cudaMemcpy(
-        d_rays, rays, h_pm.n_rays * 2 * sizeof(float), cudaMemcpyHostToDevice);
+        d_rays, &rays, h_pm.n_rays * 2 * sizeof(float), cudaMemcpyHostToDevice);
 
+    int time_step;  // declare  outside main loop for access in gen_func
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
                                 Cell* d_dX) {  // then set the mechanical forces
                                                // to zero on the device
@@ -449,7 +513,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         // return wall_forces<Cell, boundary_force>(n, d_X, d_dX, 0);
         if (h_pm.adv_switch)
             advection<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                cells.get_d_n(), d_X, d_dX, d_rays);
+                cells.get_d_n(), d_X, d_dX, d_rays, time_step);
         if (h_pm.fin_walls)
             return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX, 0,
                 h_pm.w_off_s);  //, num_walls, wall_normals, wall_offsets);
@@ -493,7 +557,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
 
     // Main simulation loop
-    for (int time_step = 0; time_step <= h_pm.cont_time; time_step++) {
+    for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
         for (float T = 0.0; T < 1.0; T += h_pm.dt) {
             generate_noise<<<(cells.get_d_n() + 32 - 1) / 32, 32>>>(
                 cells.get_d_n(),
