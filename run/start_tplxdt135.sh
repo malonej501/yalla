@@ -1,0 +1,23 @@
+#!/bin/bash
+# This script is used to compile and run the model on tplxdt135
+
+
+# prepare the environment and load necessary modules
+cd /home/m/malone/GitHub/yalla/run
+rm exec*
+rm output/*
+
+# generate .h file from default parameters
+source ../venv/bin/activate
+python3 ../sample/pwriter.py
+deactivate
+
+# compile the model
+nvcc -std=c++14 -arch=sm_61 ../examples/eggspot.cu -o exec
+
+# execute compiled model
+./exec
+
+echo "Job $job_id has completed."
+
+cp ../examples/eggspot.cu output/eggspot.cu # copy source code into output directory
