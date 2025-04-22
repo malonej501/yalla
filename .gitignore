@@ -12,6 +12,7 @@ run/saves/
 backups
 *.vtk
 *.png
+*.pdf
 *.h
 *.csv
 *.pyc
