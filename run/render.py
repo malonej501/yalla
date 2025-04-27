@@ -1,9 +1,10 @@
-from vedo import *
 import sys
 import shapely
 import math
 from matplotlib.patches import Polygon
 import matplotlib.pyplot as plt
+from vedo import Plotter, Points, show, addons, Text2D, Mesh, Line, Video
+from vedo import load, image, pyplot
 import pandas as pd
 import numpy as np
 import alphashape
@@ -13,119 +14,138 @@ from pyvirtualdisplay import Display
 # Default parameters
 
 # Visualisation
-export = False # export the rendering to video file
-c_prop = "cell_type" # cell property to colourise
-func = 0 # by default render movie
-zoom = 0.6 # define the how far the camera is out
-pt_size = 12 # how large the cells are drawn
-animate = 2 # 0 = False, 1 = Matplotlib, 2 = Vedo
-ax = True # show axes
+EXPORT = False  # export the rendering to video file
+C_PROP = "cell_type"  # cell property to colourise
+FUNC = 0  # by default render movie
+ZOOM = 0.6  # define the how far the camera is out
+PT_SIZE = 12  # how large the cells are drawn
+ANIMATE = 2  # 0 = False, 1 = Matplotlib, 2 = Vedo
+SHOW_AX = True  # show axes
+FOLDER_PATH = "../run/saves/test"  # default output folder
+VTKS = None  # list of vtk files
+WALK_ID = 0  # defualt if only one tissue simulation
+STEP = 0
 
 # DBSCAN parameters
-eps = 0.05 # maximum distance between two samples for one to be considered as in the neighborhood of the other
+EPS = 0.05  # maximum distance between two samples for one to be considered
+# as in the neighborhood of the other
 
-def render_frame(vtks, folder_path, walk_id, step):
-    
-    display = Display(visible=0, size=(1366, 768)) # virtual display for offscreen rendering
+
+def render_frame():
+    """Render the final element of a list of vtks offscreen and export as 
+    .png"""
+
+    # virtual display for offscreen rendering
+    display = Display(visible=0, size=(1366, 768))
     display.start()
-    vtk = vtks[-1] # select final frame
+    vtk = VTKS[-1]  # select final frame
     cmap = "viridis"
-    points = Points(vtk).point_size(pt_size * zoom).cmap(cmap, c_prop)
-    plt = show(points, offscreen=True)
-    plt.screenshot(f"{folder_path}/out_{walk_id}_{step}_{len(vtks)-1}.png")
+    points = Points(vtk).point_size(PT_SIZE * ZOOM).cmap(cmap, C_PROP)
+    p = show(points, offscreen=True)
+    p.screenshot(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_{len(VTKS)-1}.png")
     display.stop()
 
-def render_movie(vtks, folder_path):
 
-    """Renders movie of growing tissue with one cell property colourised e.g. cell_type, u, mech_str"""
+def render_movie():
+    """Renders movie of growing tissue with one cell property colourised 
+    e.g. cell_type, u, mech_str"""
 
-    print(f"Rendering: {folder_path}")
-    
-    video_length = 10 # in seconds
+    print(f"Rendering: {FOLDER_PATH}")
+
+    video_length = 10  # in seconds
     cmap = "viridis"
-    lims = ((-1,6),(-1,6))
-    # lims = ((-10,10),(-10,10))
-    cell_types = tissue_properties(vtks) # load global properties for consistent gui throught timecourse
+    # load global properties for consistent gui throught timecourse
+    cell_types = tissue_properties()
 
     # Create a plotter
-    plt = Plotter(interactive=False)
-    # ax = addons.Axes(plt, xrange=(lims[0][0],lims[0][1]), yrange=(lims[1][0],lims[1][1]), zrange=(0,0))
-    # ax.name = "ax"
-    plt.show(zoom="tight", axes=1 if ax == True else 0) #zoom="tight")#,axes=ax)#, axes=13)
-    plt.zoom(zoom)
+    p = Plotter(interactive=False)
+    p.show(zoom="tight", axes=1 if SHOW_AX else 0)
+    p.zoom(ZOOM)
 
-    if export:
+    if EXPORT:
         v = Video(
-            name=f"{folder_path.split('/')[-1]}_{c_prop}.mp4", 
-            duration=video_length, 
+            name=f"../run/saves/{FOLDER_PATH.rsplit('/', maxsplit=1)[-1]
+                                 }_{C_PROP}.mp4",
+            duration=video_length,
             backend="imageio")
-    
+
     frames = []
     # Loop through the VTK files and visualize them
-    for i, vtk in enumerate(vtks):
+    for i, vtk in enumerate(VTKS):
 
-        points = Points(vtk).point_size(pt_size * zoom) #originally 10
-        # lims = ((points.bounds()[0],points.bounds()[1]),(points.bounds()[2],points.bounds()[3]))
+        pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
+        # lims = ((pts.bounds()[0],pts.bounds()[1]),
+        # (pts.bounds()[2],pts.bounds()[3]))
 
-        points.cmap(cmap, c_prop)
-        bar = addons.ScalarBar(points, title=c_prop)
+        pts.cmap(cmap, C_PROP)
+        br = addons.ScalarBar(pts, title=C_PROP)
         info = Text2D(
             txt=(f"i: {i}\n"
-                 f"n: {len(points.vertices)}\n" +
-                 "".join([f"n_{cell_type}: {len(points.pointdata['cell_type'][points.pointdata['cell_type'] == cell_type])}\n" for cell_type in cell_types])),
+                 f"n: {len(pts.vertices)}\n" +
+                 "".join([f"n_{cell_type}: {
+                     len(pts.pointdata['cell_type'][
+                         pts.pointdata['cell_type'] == cell_type])}\n" for
+                     cell_type in cell_types])),
             pos="bottom-left")
 
-        points.name = "cells"
-        bar.name = "bar"
+        pts.name = "cells"
+        br.name = "bar"
         info.name = "info"
-        frames.append((points, bar, info))
+        frames.append((pts, br, info))
         # Add the mesh to the plotter
-        plt.remove("cells").add(points)
-        plt.remove("bar").add(bar)
-        plt.remove("info").add(info)
-       
-        plt.render()#.reset_camera()
-        if export:
+        p.remove("cells").add(pts)
+        p.remove("bar").add(br)
+        p.remove("info").add(info)
+
+        p.render()  # .reset_camera()
+        if EXPORT:
             v.add_frame()
 
-    if export:
+    if EXPORT:
         v.close()
 
-    def slider1(widget, event):
-        val = widget.value # get the slider current value
-        points, bar, info = frames[int(val)]
+    def slider1(widget, _):
+        val = widget.value  # get the slider current value
+        pts, br, info = frames[int(val)]
 
-        plt.remove("cells").add(points)
-        plt.remove("bar").add(bar)
-        plt.remove("info").add(info)
+        p.remove("cells").add(pts)
+        p.remove("bar").add(br)
+        p.remove("info").add(info)
 
-        plt.render()
+        p.render()
 
-    def slider2(widget, event):
-        val = int(widget.value) # get slider value
-        c_prop = points.pointdata.keys()[val] # return new cmap from slider
-        
+    def slider2(widget, _):
+        val = int(widget.value)  # get slider value
+        if not hasattr(slider2, "prev_val"):
+            slider2.prev_val = val  # initialise prev_val
+        if val == slider2.prev_val:  # only update if int val has changed
+            return
+        slider2.prev_val = val
+        pts, br, info = frames[int(val)]  # get current frame
+        c_prop_local = pts.pointdata.keys()[val]  # return new cmap from slider
+
         # change the cmap for and bar to the current frame
-        points.cmap(cmap, c_prop) 
-        bar = addons.ScalarBar(points, title=c_prop)
-        bar.name = "bar"
-        plt.remove("bar").add(bar) 
-        plt.render()
+        pts.cmap(cmap, c_prop_local)
+        br = addons.ScalarBar(pts, title=c_prop_local)
+        br.name = "bar"
+        p.remove("bar").add(br)
+        p.render()
 
         # change the cmap for and add bar to all frames
-        for k, (pts, br, info) in enumerate(frames):
-            pts = pts.cmap(cmap, c_prop)
-            br = bar
-            frames[k] = (pts, br, info)
+        for k, (pts, b, info) in enumerate(frames):
+            pts = pts.cmap(cmap, c_prop_local)
+            b = br
+            frames[k] = (pts, b, info)
 
-    plt.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
-    plt.add_slider(slider2, 0, len(points.pointdata.keys())-1, pos="top-left", value=points.pointdata.keys().index(c_prop))
-    plt.interactive()
+    p.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
+    p.add_slider(slider2, 0, len(pts.pointdata.keys())-1,
+                 pos="top-left", value=pts.pointdata.keys().index(C_PROP))
+    p.interactive()
 
-def show_chem_grad(folder_path):
 
+def show_chem_grad():
     """Plot chemical amount along x axis of tissue for several timepoints"""
-    pts = load_vtks(folder_path)
+    pts = load_vtks(FOLDER_PATH)
 
     n_t = 10
 
@@ -137,16 +157,15 @@ def show_chem_grad(folder_path):
 
     u = pts[0].pointdata["u"]
     v = pts[0].pointdata["v"]
-    attributes = [u,v]
+    attributes = [u, v]
 
-
-    fig, axs = plt.subplots(n_t,2, figsize=(10,2*n_t))
+    _, axs = plt.subplots(n_t, 2, figsize=(10, 2*n_t))
 
     for i, row in enumerate(axs):
-        t = int(i* len(pts)/n_t)
+        t = int(i * len(pts)/n_t)
         u = pts[t].pointdata["u"]
         v = pts[t].pointdata["v"]
-        attributes = [u,v]
+        attributes = [u, v]
         for j, ax in enumerate(row):
             ax.scatter(x_pos, attributes[j])
             ax.set_title(f"t = {t}")
@@ -159,121 +178,136 @@ def show_chem_grad(folder_path):
     plt.tight_layout()
     plt.show()
 
-def tissue_stats(vtks):
 
-    """Return basic tissue stats for each vtk file e.g. tissue xmin and xmax, no. each cell type etc."""
+def tissue_stats():
+    """Return basic tissue stats for each vtk file e.g. tissue xmin and xmax, 
+    no. each cell type etc."""
 
     stats = []
-    for pt in vtks:
-        #print(pt.vertices[:10])
+    for pt in VTKS:
+        # print(pt.vertices[:10])
         xmax = max(pt.vertices[:, 0])
         ymax = max(pt.vertices[:, 1])
         xmin = min(pt.vertices[:, 0])
         ymin = min(pt.vertices[:, 1])
 
-        n_A = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 1])
-        n_B = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 2])
+        n_a = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 1])
+        n_b = len(pt.pointdata["cell_type"][pt.pointdata["cell_type"] == 2])
 
         stats.append({
             'xmax': xmax,
             'ymax': ymax,
             'xmin': xmin,
             'ymin': ymin,
-            'n_A': n_A,
-            'n_B': n_B,
+            'n_A': n_a,
+            'n_B': n_b,
         })
-    
+
     stats_df = pd.DataFrame(stats)
     print(stats_df)
 
-def pattern_stats(vtks, folder_path):
 
+def pattern_stats():
     """Cluster spot cells and infer alpha shapes and shape stats"""
 
     stats = []
     frames = []
-    print(f"Clustering and alpha shapes analysis: {folder_path}")
-    for i, mesh in enumerate(vtks):
+    print(f"Clustering and alpha shapes analysis: {FOLDER_PATH}")
+    for i, mesh in enumerate(VTKS):
         sys.stdout.write(f"\rProcessing frame: {i}")
         sys.stdout.flush()
-        mesh = vtks[i]
-        X_spots = mesh.vertices[mesh.pointdata["cell_type"] == 1] # return positions of spot cells
-        if X_spots.size == 0: # skip the iteration if there are no spot cells present in the vtk
+        mesh = VTKS[i]
+        # return positions of spot cells
+        x_spots = mesh.vertices[mesh.pointdata["cell_type"] == 1]
+        if x_spots.size == 0:  # skip if there no spot cells present in vtk
             continue
-        # eps - maximum distance between two samples for one to be considered as in the neighborhood of the other - set to equilibrium distance between spot cells - check force potential
-        db = DBSCAN(eps=eps, min_samples=1).fit(X_spots)
+        # eps - maximum distance between two samples for one to be considered
+        # as in the neighborhood of the other - set to equilibrium distance
+        # between spot cells - check force potential
+        db = DBSCAN(eps=EPS, min_samples=1).fit(x_spots)
         labels = db.labels_
 
         # Number of clusters in labels, ignoring noise if present.
         unique_labels = set(labels)
         n_clusters = len(unique_labels) - (1 if -1 in labels else 0)
-        n_noise = list(labels).count(-1) # noisy points are given the label -1
-        #https://scikit-learn.org/1.5/modules/clustering.html#silhouette-coefficient
-        # s_coeff = metrics.silhouette_score(spot_cells, labels) # a higher Silhouette Coefficient score relates to a model with better defined clusters
-        
-        core_samples_mask = np.zeros_like(labels,dtype=bool)
+        n_noise = list(labels).count(-1)  # noisy points are given the label -1
+        # https://scikit-learn.org/1.5/modules/clustering.html#s
+        # ilhouette-coefficient
+        # s_coeff = metrics.silhouette_score(spot_cells, labels) # a higher
+        # Silhouette Coefficient score relates to a model with better defined
+        # clusters
+
+        core_samples_mask = np.zeros_like(labels, dtype=bool)
         core_samples_mask[db.core_sample_indices_] = True
 
         a_shapes = []
         areas = []
-        roundnesses = [] # roundness is only computed for polygons - not lines, points etc.
+        # roundness is only computed for polygons - not lines, points etc.
+        roundnesses = []
         n_poly = 0
         tags = []
-        a_meshes = [] # the alpha shapes
-        p_meshes = [] # the spot cell points
+        a_meshes = []  # the alpha shapes
+        p_meshes = []  # the spot cell points
         # return the coordinates of the cells in each cluster
         for l in unique_labels:
             class_member_mask = labels == l
-            xy = X_spots[class_member_mask & core_samples_mask]
-            p_mesh = Points(xy).point_size(pt_size * zoom).color(l)
+            xy = x_spots[class_member_mask & core_samples_mask]
+            p_mesh = Points(xy).point_size(PT_SIZE * ZOOM).color(l)
             p_mesh.name = "p_mesh"
             p_meshes.append(p_mesh)
-            xy = np.delete(xy, 2, axis=1) # remove z dimension
+            xy = np.delete(xy, 2, axis=1)  # remove z dimension
             alpha_shape = alphashape.alphashape(xy, alpha=15)
 
-            # plot alpha shape with Polygon(list(alpha_shape.exterior.coords), alpha=0.2)
+            # plot alpha shape with Polygon(list(alpha_shape.exterior.coords),
+            # alpha=0.2)
             a_shapes.append((l, alpha_shape))
-            areas.append(alpha_shape.area) # calculate area for all types of geometries, not just polygons
-            if alpha_shape.geom_type == "Polygon": #or alpha_shape.geom_type == "MultiPolygon":
-                n_poly += 1 # count number of polygons
+            # calculate area for all types of geometries, not just polygons
+            areas.append(alpha_shape.area)
+            # or alpha_shape.geom_type == "MultiPolygon":
+            if alpha_shape.geom_type == "Polygon":
+                n_poly += 1  # count number of polygons
                 a_shape_np = np.array(alpha_shape.exterior.coords)
-                z_col = np.zeros((a_shape_np.shape[0],1))
+                z_col = np.zeros((a_shape_np.shape[0], 1))
                 a_shape_np = np.hstack((a_shape_np, z_col))
                 cells = np.array([range(len(a_shape_np))])
 
-                a_mesh = Mesh([a_shape_np,cells])
-                a_mesh_ids = a_mesh.labels(content=np.array([l]), on="cells",yrot=180) # only display label if polygon
+                a_mesh = Mesh([a_shape_np, cells])
+                # only display label if polygon
+                a_mesh_ids = a_mesh.labels(
+                    content=np.array([l]), on="cells", yrot=180)
                 a_mesh_ids.name = "tag"
                 tags.append(a_mesh_ids)
                 a_mesh.color(l).alpha(0.2)
-                a_mesh.triangulate() # to ensure neat rendering of final shapes
+                a_mesh.triangulate()  # ensure neat rendering of final shapes
                 a_mesh.name = "a_mesh"
                 a_meshes.append(a_mesh)
 
                 perimeter = shapely.length(alpha_shape)
-                roundnesses.append((4 * math.pi * alpha_shape.area) / (perimeter**2)) # 1 for perfect circle, 0 for non-circular
-            if alpha_shape.geom_type == "LineString": 
+                # 1 for perfect circle, 0 for non-circular
+                roundnesses.append(
+                    (4 * math.pi * alpha_shape.area) / (perimeter**2))
+            if alpha_shape.geom_type == "LineString":
                 a_meshes.append(None)
                 tags.append(None)
-                roundnesses.append(0) # if line roundness is 0
-            if alpha_shape.geom_type == "Point": 
+                roundnesses.append(0)  # if line roundness is 0
+            if alpha_shape.geom_type == "Point":
                 a_meshes.append(None)
                 tags.append(None)
-                roundnesses.append(1) # if point roundness is 1
-                
+                roundnesses.append(1)  # if point roundness is 1
+
         info = Text2D(
             txt=(f"i: {i}\n"
-            f"n_clusters: {len(unique_labels)}\n"
-            f"n_polygons: {n_poly}\n"
-            f"mean_area: {np.mean(areas):.4f}\n"
-            f"std_area: {np.std(areas):.4f}\n"
-            f"mean_roundnesses: {np.mean(roundnesses):.4f}\n"
-            f"std_roundnesses: {np.std(roundnesses):.4f}\n"),
+                 f"n_clusters: {len(unique_labels)}\n"
+                 f"n_polygons: {n_poly}\n"
+                 f"mean_area: {np.mean(areas):.4f}\n"
+                 f"std_area: {np.std(areas):.4f}\n"
+                 f"mean_roundnesses: {np.mean(roundnesses):.4f}\n"
+                 f"std_roundnesses: {np.std(roundnesses):.4f}\n"),
             pos="bottom-left")
         info.name = "info"
 
-        frames.append((a_meshes,p_meshes,info,tags))
-        
+        frames.append((a_meshes, p_meshes, info, tags))
+
         stats.append({
             "frame": i,
             "n_clusters": n_clusters,
@@ -287,8 +321,8 @@ def pattern_stats(vtks, folder_path):
         })
     stats_df = pd.DataFrame(stats)
     print("\nClustering and alpha shapes analysis complete.")
-    print(stats_df)  
- 
+    print(stats_df)
+
     # plot the statistics over the simulation timeseries
     print("Generating shape statistics plots...")
     # figs = plot_alpha_shape_stats(stats_df)
@@ -296,117 +330,131 @@ def pattern_stats(vtks, folder_path):
     print("Done")
 
     # render the output
-    video_length=10
-    if export:
+    v = None  # video object
+    video_length = 10
+    if EXPORT:
         v = Video(
-            name=f"{folder_path.split('/')[-1]}_{c_prop}_f1.mp4", 
-            duration=video_length, 
+            name=f"{FOLDER_PATH.rsplit('/', maxsplit=1)[-1]}_{C_PROP}_f1.mp4",
+            duration=video_length,
             backend="imageio")
 
-    custom_shape = [ # specify the position and size of each rendering window in the plotter object
-        dict(bottomleft=(0.00,0.00), topright=(0.70,1.00)),
-        dict(bottomleft=(0.70,0.00), topright=(1.00,0.25)),
-        dict(bottomleft=(0.70,0.25), topright=(1.00,0.50)),
-        dict(bottomleft=(0.70,0.50), topright=(1.00,0.75)),
-        dict(bottomleft=(0.70,0.75), topright=(1.00,1.00)),
+    custom_shape = [  # position and size of rendering windows in plt
+        dict(bottomleft=(0.00, 0.00), topright=(0.70, 1.00)),
+        dict(bottomleft=(0.70, 0.00), topright=(1.00, 0.25)),
+        dict(bottomleft=(0.70, 0.25), topright=(1.00, 0.50)),
+        dict(bottomleft=(0.70, 0.50), topright=(1.00, 0.75)),
+        dict(bottomleft=(0.70, 0.75), topright=(1.00, 1.00)),
     ]
 
-    # plt = Plotter(interactive=False, shape="1|4", size=(1920,1080), sharecam=False)
-    plt = Plotter(interactive=False, shape=custom_shape, size=(1200,900), sharecam=False)
-    # plt = Plotter(interactive=False, shape=(2,3), sharecam=False)
-    # plt.show(zoom="tight")#,axes=13)
-    plt.show(zoom="tight",axes=1)
-    plt.at(0).zoom(zoom)
+    # p = Plotter(interactive=False, shape="1|4", size=(1920,1080),
+    # sharecam=False)
+    p = Plotter(interactive=False, shape=custom_shape,
+                size=(1200, 900), sharecam=False)
+    # p = Plotter(interactive=False, shape=(2,3), sharecam=False)
+    # p.show(zoom="tight")#,axes=13)
+    p.show(zoom="tight", axes=1)
+    p.at(0).zoom(ZOOM)
 
     for frame, fig in zip(frames, figs):
         a_meshes, p_meshes, info, tags = frame
         fig1, fig2, fig3, fig4 = fig
 
-        plt.at(0).remove("a_mesh").add(a_meshes)
-        plt.at(0).remove("p_mesh").add(p_meshes)
-        plt.at(0).remove("info").add(info)
-        plt.at(0).remove("tag").add(tags)
-        plt.at(1).remove("fig1").add(fig1).reset_camera(tight=0)
-        plt.at(2).remove("fig2").add(fig2).reset_camera(tight=0)
-        plt.at(3).remove("fig3").add(fig3).reset_camera(tight=0)
-        plt.at(4).remove("fig4").add(fig4).reset_camera(tight=0)
-        plt.render()
+        p.at(0).remove("a_mesh").add(a_meshes)
+        p.at(0).remove("p_mesh").add(p_meshes)
+        p.at(0).remove("info").add(info)
+        p.at(0).remove("tag").add(tags)
+        p.at(1).remove("fig1").add(fig1).reset_camera(tight=0)
+        p.at(2).remove("fig2").add(fig2).reset_camera(tight=0)
+        p.at(3).remove("fig3").add(fig3).reset_camera(tight=0)
+        p.at(4).remove("fig4").add(fig4).reset_camera(tight=0)
+        p.render()
+        if EXPORT:
+            v.add_frame()
+    if EXPORT:
+        v.close()
 
-        v.add_frame() if export else None
+    def slider1(widget, _):
+        val = widget.value  # get the slider current value
 
-    v.close() if export else None
+        a_meshes, p_meshes, info, tags = frames[int(val)]
 
-    def slider1(widget, event):
-        val = widget.value # get the slider current value
+        p.at(0).remove("a_mesh").add(a_meshes)
+        p.at(0).remove("p_mesh").add(p_meshes)
+        p.at(0).remove("info").add(info)
+        p.at(0).remove("tag").add(tags)
 
-        a_meshes, p_meshes, info, tags= frames[int(val)]
-
-        plt.at(0).remove("a_mesh").add(a_meshes)
-        plt.at(0).remove("p_mesh").add(p_meshes)
-        plt.at(0).remove("info").add(info)
-        plt.at(0).remove("tag").add(tags)
-
-        if animate == 1:    # if matplotlib animation
+        if ANIMATE == 1:    # if matplotlib animation
             fig = figs[int(val)]
-            plt.at(1).remove("fig").add(fig).reset_camera(tight=0)
-        
-        if animate == 2:
-            fig1, fig2, fig3, fig4 = figs[int(val)]
-            plt.at(1).remove("fig1").add(fig1)
-            plt.at(2).remove("fig2").add(fig2)
-            plt.at(3).remove("fig3").add(fig3)
-            plt.at(4).remove("fig4").add(fig4)
-            
-        plt.render()
+            p.at(1).remove("fig").add(fig).reset_camera(tight=0)
 
-    plt.at(0).add_slider(slider1, 0, len(frames)-1, pos=([0.1,0.9],[0.4,0.9]), value=len(frames))
-    plt.interactive()#.close()
+        if ANIMATE == 2:
+            fig1, fig2, fig3, fig4 = figs[int(val)]
+            p.at(1).remove("fig1").add(fig1)
+            p.at(2).remove("fig2").add(fig2)
+            p.at(3).remove("fig3").add(fig3)
+            p.at(4).remove("fig4").add(fig4)
+
+        p.render()
+
+    p.at(0).add_slider(slider1, 0, len(frames)-1,
+                       pos=([0.1, 0.9], [0.4, 0.9]), value=len(frames))
+    p.interactive()  # .close()
 
     return stats_df
 
+
 def plot_alpha_shape_stats_vedo(d):
+    """Plot the spot shape statistics over simulation timecourse from 
+    dataframe of statistics using vedo"""
 
-    """Plot the spot shape statistics over simulation timecourse from dataframe of statistics using vedo"""
+    t = 2.0  # text scale
 
-    t = 2.0 # text scale
-    
     figs = []
     for i in range(len(d)):
-        
-        fig1 = pyplot.plot(np.array(d["frame"]),np.array(d["n_clusters"]),
-        xtitle="i", ytitle="No.clusters", axes=dict(text_scale=t))
-        fig1 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+
+        fig1 = pyplot.plot(np.array(d["frame"]), np.array(d["n_clusters"]),
+                           xtitle="i", ytitle="No.clusters",
+                           axes={"text_scale": t})
+        fig1 += Line(p0=(i, -1000, 0), p1=(i, 1000, 0), c="red")
         fig1.name = "fig1"
 
-        fig2 = pyplot.plot(np.array(d["frame"]),np.array(d["n_polygons"]),
-        xtitle="i", ytitle="No. polygons", axes=dict(text_scale=t))
-        fig2 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+        fig2 = pyplot.plot(np.array(d["frame"]), np.array(d["n_polygons"]),
+                           xtitle="i", ytitle="No. polygons",
+                           axes={"text_scale": t})
+        fig2 += Line(p0=(i, -1000, 0), p1=(i, 1000, 0), c="red")
         fig2.name = "fig2"
-        
-        fig3 = pyplot.plot(np.array(d["frame"]),np.array(d["mean_area"]),
-        yerrors=np.array(d["std_area"])+0.0000001, error_band=True, ec="grey", # add small number to prevent errors - may lead to bugs later so careful
-        xtitle="i", ytitle="Mean area", axes=dict(text_scale=t), xlim=(0, None))
-        fig3 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+
+        fig3 = pyplot.plot(np.array(d["frame"]), np.array(d["mean_area"]),
+                           # add small number to prevent errors - careful
+                           yerrors=np.array(d["std_area"])+0.0000001,
+                           error_band=True, ec="grey",
+                           xtitle="i", ytitle="Mean area",
+                           axes={"text_scale": t}, xlim=(0, None))
+        fig3 += Line(p0=(i, -1000, 0), p1=(i, 1000, 0), c="red")
         fig3.name = "fig3"
 
-        fig4 = pyplot.plot(np.array(d["frame"]),np.array(d["mean_roundness"]),
-        yerrors=np.array(d["std_roundness"])+0.0000001, error_band=True, ec="grey",
-        xtitle="i", ytitle="Mean roundness", axes=dict(text_scale=t))
-        fig4 += Line(p0=(i,-1000,0),p1=(i,1000,0),c="red")
+        fig4 = pyplot.plot(np.array(d["frame"]),
+                           np.array(d["mean_roundness"]),
+                           yerrors=np.array(d["std_roundness"])+0.0000001,
+                           error_band=True, ec="grey",
+                           xtitle="i", ytitle="Mean roundness",
+                           axes={"text_scale": t})
+        fig4 += Line(p0=(i, -1000, 0), p1=(i, 1000, 0), c="red")
         fig4.name = "fig4"
-    
+
         figs.append((fig1, fig2, fig3, fig4))
 
     return figs
 
-def plot_alpha_shape_stats(d):
 
-    """Plot the spot shape statistics over simulation timecourse from dataframe of statistics using matplotlib"""
+def plot_alpha_shape_stats(d):
+    """Plot the spot shape statistics over simulation timecourse from 
+    dataframe of statistics using matplotlib"""
 
     figs = []
-    if animate == 1:
+    if ANIMATE == 1:
         for i in range(len(d)):
-            fig, axs = plt.subplots(nrows=2,ncols=2,figsize=(10,8),dpi=300)
+            fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(10, 8), dpi=300)
             axs = axs.flatten()
 
             ax = axs[0]
@@ -421,30 +469,34 @@ def plot_alpha_shape_stats(d):
 
             ax = axs[2]
             ax.plot(d["frame"], d["mean_area"])
-            ax.fill_between(d["frame"], d["mean_area"] - d["std_area"], d["mean_area"] + d["std_area"], alpha=0.2)
+            ax.fill_between(d["frame"], d["mean_area"] - d["std_area"],
+                            d["mean_area"] + d["std_area"], alpha=0.2)
             ax.axvline(x=i, c="C1")
-            ax.set_ylim(0,None)
+            ax.set_ylim(0, None)
             ax.set_ylabel(r"Mean spot area $\pm$std")
 
             ax = axs[3]
             ax.plot(d["frame"], d["mean_roundness"])
-            ax.fill_between(d["frame"], d["mean_roundness"] - d["std_roundness"], d["mean_roundness"] + d["std_roundness"], alpha=0.2)
+            ax.fill_between(d["frame"], d["mean_roundness"] -
+                            d["std_roundness"], d["mean_roundness"] +
+                            d["std_roundness"], alpha=0.2)
             ax.axvline(x=i, c="C1")
-            ax.set_ylim(0,None)
-            ax.set_ylabel(r"Mean spot roundness $(\frac{4\pi \times \text{Area}}{\text{Perimeter}^2})$ $\pm$std")
+            ax.set_ylim(0, None)
+            ax.set_ylabel(r"Mean spot roundness $(\frac{4\pi \times "
+                          r"\text{Area}}{\text{Perimeter}^2})$ $\pm$std")
 
             fig.supxlabel("Frame no.")
             fig.tight_layout()
             figs.append(fig)
             plt.close(fig)
-        
+
         for i, fig in enumerate(figs):
-            figs[i] = image.Image(fig) # turn in into image
+            figs[i] = image.Image(fig)  # turn in into image
 
     else:
-        fig, axs = plt.subplots(nrows=2,ncols=2,figsize=(10,8),dpi=300)
+        fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(10, 8), dpi=300)
         axs = axs.flatten()
-        
+
         ax = axs[0]
         ax.plot(d["frame"], d["n_clusters"])
         ax.set_ylabel("No. clusters")
@@ -455,29 +507,34 @@ def plot_alpha_shape_stats(d):
 
         ax = axs[2]
         ax.plot(d["frame"], d["mean_area"])
-        ax.fill_between(d["frame"], d["mean_area"] - d["std_area"], d["mean_area"] + d["std_area"], alpha=0.2)
-        ax.set_ylim(0,None)
+        ax.fill_between(d["frame"], d["mean_area"] - d["std_area"],
+                        d["mean_area"] + d["std_area"], alpha=0.2)
+        ax.set_ylim(0, None)
         ax.set_ylabel(r"Mean spot area $\pm$std")
 
         ax = axs[3]
         ax.plot(d["frame"], d["mean_roundness"])
-        ax.fill_between(d["frame"], d["mean_roundness"] - d["std_roundness"], d["mean_roundness"] + d["std_roundness"], alpha=0.2)
-        ax.set_ylim(0,None)
-        ax.set_ylabel(r"Mean spot roundness $(\frac{4\pi \times \text{Area}}{\text{Perimeter}^2})$ $\pm$std")
+        ax.fill_between(d["frame"], d["mean_roundness"] - d["std_roundness"],
+                        d["mean_roundness"] + d["std_roundness"], alpha=0.2)
+        ax.set_ylim(0, None)
+        ax.set_ylabel(r"Mean spot roundness $(\frac{4\pi \times "
+                      r"\text{Area}}{\text{Perimeter}^2})$ $\pm$std")
 
         fig.supxlabel("Frame no.")
         fig.tight_layout()
-        figs = image.Image(fig) # turn into image
+        figs = image.Image(fig)  # turn into image
     # plt.show()
 
     return figs
 
 
-def plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_shapes):
+def plot_alpha_shapes(uniq_labs, labels, core_samples_mask, spot_cells,
+                      a_shapes):
+    """Matplotlib function for plotting alpha shapes and clusters"""
 
-    colors = [plt.cm.Spectral(each) for each in np.linspace(0, 1, len(unique_labels))]
-    fig, ax = plt.subplots(figsize=(10,9))
-    for k, col in zip(unique_labels, colors):
+    cs = [plt.cm.Spectral(i) for i in np.linspace(0, 1, len(uniq_labs))]
+    _, ax = plt.subplots(figsize=(10, 9))
+    for k, col in zip(uniq_labs, cs):
         if k == -1:
             # Black used for noise.
             col = [0, 0, 0, 1]
@@ -501,27 +558,29 @@ def plot_alpha_shapes(unique_labels, labels, core_samples_mask, spot_cells, a_sh
         )
         a_shape = a_shapes[k][1]
         print(type(a_shape))
-        #if isinstance(a_shape, shapely.geometry.polygon.Polygon):
+        # if isinstance(a_shape, shapely.geometry.polygon.Polygon):
         if a_shape.geom_type == "Polygon":
             a_shape_poly = list(a_shape.exterior.coords)
             ax.add_patch(Polygon(a_shape_poly, facecolor=col, alpha=0.2))
-    
 
-    plt.title(f"Estimated number of clusters: {len(unique_labels)}")
+    plt.title(f"Estimated number of clusters: {len(uniq_labs)}")
     plt.show()
 
-def tissue_properties(vtks):
-    """Return properties of the tissue over the entire timecourse, not deducible
-    from individual vtk files e.g. maximum no. cell types"""
+
+def tissue_properties():
+    """Return properties of the tissue over the entire timecourse, not 
+    deducible individual vtk files e.g. maximum no. cell types"""
     cell_types = []
-    for vtk in vtks:
+    for vtk in VTKS:
         cell_types_i = np.unique(vtk.pointdata["cell_type"])
         if len(cell_types_i) > len(cell_types):
-            cell_types = cell_types_i # get the maximum no. cell types
-    
+            cell_types = cell_types_i  # get the maximum no. cell types
+
     return cell_types
 
+
 def print_help():
+    """Print help message for the script"""
     help_message = """
     Usage: python3 render.py [vtk_directory] [options]
     
@@ -538,10 +597,10 @@ def print_help():
         -w [walk id]    id of the walk being rendered
         -s [step]       Step of the walk being rendered
         """
-    
+
     print(help_message)
 
-    
+
 if __name__ == "__main__":
     # collect bash arguments
     args = sys.argv[1:]
@@ -551,31 +610,26 @@ if __name__ == "__main__":
         output_folder = args[0]
         # fetch custom parameters
         if "-e" in args:
-            export = True
+            EXPORT = True
         if "-c" in args:
-            c_prop = str(args[args.index("-c") + 1]) # idx comes after -c flag
+            C_PROP = str(args[args.index("-c") + 1])  # idx comes after -c flag
         if "-f" in args:
-            func = int(args[args.index("-f") + 1])
+            FUNC = int(args[args.index("-f") + 1])
         if "-z" in args:
-            zoom = float(args[args.index("-z") + 1])
+            ZOOM = float(args[args.index("-z") + 1])
         if "-w" in args:
-            walk_id = int(args[args.index("-w") + 1])
+            WALK_ID = int(args[args.index("-w") + 1])
         if "-s" in args:
-            step = int(args[args.index("-s") + 1])
-            
+            STEP = int(args[args.index("-s") + 1])
 
-        folder_path = f'../run/{output_folder}' # directory
+        FOLDER_PATH = f'../run/{output_folder}'  # directory
 
-        
-        if func == 0:
-            vtks = load(f"{folder_path}/*.vtk")
-            render_movie(vtks, folder_path)
-        elif func == 1:
-            vtks = load(f"{folder_path}/*.vtk")
-            pattern_stats(vtks, folder_path)
-        elif func == 2:
-            vtks = load(f"{folder_path}/out_{walk_id}_{step}_*.vtk")
-            render_frame(vtks, folder_path, walk_id, step)
-
-
-
+        if FUNC == 0:
+            VTKS = load(f"{FOLDER_PATH}/*.vtk")
+            render_movie()
+        elif FUNC == 1:
+            VTKS = load(f"{FOLDER_PATH}/*.vtk")
+            pattern_stats()
+        elif FUNC == 2:
+            VTKS = load(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_*.vtk")
+            render_frame()
