@@ -42,8 +42,8 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 {
     Pt dF{0};
 
-    if (dist > d_pm.r_max)
-        return dF;  // set cutoff for computing interaction forces
+    if (dist > d_pm.r_max)  // dist = norm3df(r.x, r.y, r.z) solvers line 308
+        return dF;          // set cutoff for computing interaction forces
 
     if (i == j) {      // if the cell is interacting with itself
         dF += d_W[i];  // add stochasticity from the weiner process to the
@@ -70,12 +70,46 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
         if (d_pm.cmode == 1) {
             // see Schnackenberg 1979 eq. 41
+            float a = ((Xi.x + 3) * 0.1);
+            float b = ((Xi.y + 1) * 0.2);
             // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + d_pm.a_u;
             // dF.v = -(Xi.u * Xi.u * Xi.v) + d_pm.b_v;
-            // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + 2;
-            // dF.v = 0.1 - (Xi.u * Xi.u * Xi.v);
-            dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + (Xi.x * 0.1);
-            dF.v = -(Xi.u * Xi.u * Xi.v) + (Xi.y * 0.1);
+            dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + a;
+            dF.v = b - (Xi.u * Xi.u * Xi.v);
+            // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + (Xi.x * 0.1);
+            // dF.v = -(Xi.u * Xi.u * Xi.v) + (Xi.y * 0.1);
+        }
+        if (d_pm.cmode == 2) {
+            // Gray Scott model
+            float a = 0.3;
+            float b = 0.003;
+            float R = 0.1;
+            // float a = ((Xi.x + 3) * 0.1);
+            // float b = ((Xi.y + 1) * 0.01);
+            // float R = ((Xi.x + 3) * 0.1);
+            dF.u = R * ((Xi.u * Xi.u * Xi.v) - ((a + b) * Xi.u));
+            dF.v = R * (-(Xi.u * Xi.u * Xi.v) + (a * (1 - Xi.v)));
+        }
+        if (d_pm.cmode == 3) {
+            // Gierer Meinhardt model
+            // float a = 0.8;
+            // float b = 1;
+            // float c = 6;
+            // float a = ((Xi.x + 3) * 0.1);
+            // float b = ((Xi.y + 1) * 0.1);
+            // float c = ((Xi.y + 1) * 0.1);
+            // dF.u = (a + ((Xi.u * Xi.u) / Xi.v) - (b * Xi.u));
+            // dF.v = (Xi.u * Xi.u) - (c * Xi.v);
+            const auto lambda = 1;
+            const auto f_v = 0.1;
+            const auto f_u = 10.0;
+            const auto g_u = 5.0;
+            const auto m_u = 0.02;
+            const auto m_v = 0.05;
+            const auto s_u = 0.005;
+            dF.u = lambda *
+                   ((f_u * Xi.u * Xi.u) / (1 + f_v * Xi.v) - m_u * Xi.u + s_u);
+            dF.v = lambda * (g_u * Xi.u * Xi.u - m_v * Xi.v);
         }
         return dF;
     }
@@ -83,6 +117,10 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // Diffusion
     dF.u = -d_pm.D_u * r.u;  // r = Xi - Xj solvers.cuh line 448
     dF.v = -d_pm.D_v * r.v;
+    // dF.u = -((Xi.x + 3) * 0.01) * r.u;
+    // dF.v = -((Xi.y + 1.5) * 0.01) * r.v;
+    // dF.u = -0.1 * r.u;
+    // dF.v = -4 * r.v;
     // dF.u = -Xi.x * r.u * 0.01;
     // dF.v = -Xi.y * r.v * 0.01;
     // dF.u = -1 * r.u;
@@ -158,36 +196,28 @@ __global__ void generate_noise(int n, curandState* d_state)
 __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
     float3* d_old_v, int* d_n_cells)
 {
-    int i = blockIdx.x * blockDim.x +
-            threadIdx.x;  // get the index of the current cell
-    if (i >= n_cells)
-        return;  // return nothing if the index is greater than n_cells
-    if (n_cells >= (d_pm.n_max * 0.9))
-        return;  // return nothing if the no. cells starts to approach the max
+    int i = blockIdx.x * blockDim.x + threadIdx.x;  // index of current cell
+    if (i >= n_cells) return;                       // stop if i >= n_cells
+    if (n_cells >= (d_pm.n_max * 0.9)) return;      // no div above n_max
+    if (d_mech_str[i] > d_pm.mech_thresh) return;   // no div above mech_thresh
 
     if (d_cell_type[i] == 1) {
-        if (d_mech_str[i] > d_pm.mech_thresh) return;
         // if (d_X[i].u > 0.85) return;
         if (curand_uniform(&d_state[i]) > (d_pm.A_div * d_pm.dt)) return;
     }
 
     if (d_cell_type[i] == 2) {
-        if (d_mech_str[i] > d_pm.mech_thresh) return;
         if (curand_uniform(&d_state[i]) > (d_pm.B_div * d_pm.dt)) return;
     }
 
-    if (d_cell_type[i] == 3) {
-        if (d_mech_str[i] > d_pm.mech_thresh) return;
+    if (d_cell_type[i] == 3) {  // type 3 cells same as type 1
+        // if (d_X[i].v < d_pm.vthresh) return;  // divide if in v spot
         if (curand_uniform(&d_state[i]) > (d_pm.A_div * d_pm.dt)) return;
     }
 
-
     int n = atomicAdd(d_n_cells, 1);
 
-    // new cell added to parent at random angle and fixed distance - this method
-    // only works for 2D
-    float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
-
+    float theta = curand_uniform(&d_state[i]) * 2 * M_PI;  // child pos -2D only
     d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
     d_X[n].y = d_X[i].y + (d_pm.div_dist * sinf(theta));
     d_X[n].z = 0;
@@ -208,20 +238,13 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
                     : 2;  // sometimes cell type 2 produces cell type 1 random
                           // birth of cell type 1 is inhibited by chemical u
         if (d_pm.pmode == 2)
-            d_cell_type[n] =
-                (curand_uniform(&d_state[i]) < d_pm.r_A_birth and
-                    d_X[i].u < d_pm.uthresh)
-                    ? 1
-                    : 2;  // sometimes cell type 2 produces cell type 1 random
-                          // birth of cell type 1 is inhibited by chemical u
+            d_cell_type[n] = (curand_uniform(&d_state[i]) < d_pm.r_A_birth &&
+                                 d_X[i].u < d_pm.uthresh)
+                                 ? 1
+                                 : 2;
     }
     if (d_cell_type[i] == 1) d_cell_type[n] = 1;
     if (d_cell_type[i] == 3) d_cell_type[n] = 3;
-
-    // set child cell chemical amounts
-    // d_X[n].u = (d_cell_type[n] == 1) ? 1 : 0;     // if the child is type 1,
-    // it is given u=1,v=0 if not, u=0,v=1 d_X[n].v = (d_cell_type[n] == 1) ? 0
-    // : 1;
 
     // half the amount of each chemical upon cell division in the parent cell
     d_X[i].u *= 0.5;
@@ -238,19 +261,42 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
 
     // spot cells become static when u is high
     // if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 3;
-    float top_y = d_tis_max.y - (0.1 * (d_tis_max.y - d_tis_min.y));
-    if (d_cell_type[i] == 1 && d_X[i].u > 0.5 && d_X[i].y < top_y)
-        d_cell_type[i] = 3;  // don't switch if still in top 10% of tissue
+    // if (d_pm.tmode == 5) {  // switching for non-advecting/advecting spot
+    // cells
+    //     float top_y = d_tis_max.y - (0.4 * (d_tis_max.y - d_tis_min.y));
+    //     float bot_y = d_tis_min.y + (0.4 * (d_tis_max.y - d_tis_min.y));
+    //     if (d_cell_type[i] == 1 && d_X[i].u > 0.5 && d_X[i].y < top_y &&
+    //         d_X[i].y > bot_y)
+    //         d_cell_type[i] = 3;  // don't switch if still in top 10% of
+    //         tissue
+    // }
+    // if (d_cell_type[i] == 2 && d_X[i].u > 180) {
+    //     d_cell_type[i] = 1;  // switch to spot cell if u high
+    // }
+    // if (d_cell_type[i] == 1 && d_X[i].u < 180) {
+    //     d_cell_type[i] = 2;  // switch to non-spot cell if u low
+    // }
+    float top_y = d_tis_max.y - (0.2 * (d_tis_max.y - d_tis_min.y));
+    float bot_y = d_tis_min.y + (0.2 * (d_tis_max.y - d_tis_min.y));
+    if (d_X[i].y < top_y && d_X[i].y > bot_y) {
+        if (d_cell_type[i] == 1 && d_X[i].v > d_pm.vthresh) {
+            d_cell_type[i] = 3;  // switch to spot cell if u high
+        }
+        if (d_cell_type[i] == 3 && d_X[i].v < d_pm.vthresh) {
+            d_cell_type[i] = 2;  // switch to non-spot cell if u low
+        }
+    }
 }
 
-__global__ void death(int n_cells, Cell* d_X, int* d_n_cells)
+__global__ void death(
+    int n_cells, curandState* d_state, Cell* d_X, int* d_n_cells)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
+    float r = curand_uniform(&d_state[i]);
 
-    if (d_X[i].u > d_pm.u_death &&
-        (d_cell_type[i] == 1 ||
-            d_cell_type[i] == 3)) {       // die if type 1/3 and u high
+    if (d_X[i].u < d_pm.vthresh &&
+        d_cell_type[i] == 3) {            // die if type 3 and u low
         int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
         // overwrite cell i with last cell in d_X, stop if only one cell left
         if (i < n) {
@@ -259,6 +305,15 @@ __global__ void death(int n_cells, Cell* d_X, int* d_n_cells)
             d_mech_str[i] = d_mech_str[n - 1];
         }
     }
+    // if (d_cell_type[i] == 2 && r < d_pm.q_death &&
+    //     d_X[i].u < 0.15) {  // die if type 2 and u low
+    //     int n = atomicSub(d_n_cells, 1);
+    //     if (i < n) {
+    //         d_X[i] = d_X[n - 1];
+    //         d_cell_type[i] = d_cell_type[n - 1];
+    //         d_mech_str[i] = d_mech_str[n - 1];
+    //     }
+    // }
 }
 
 void init_rays(Mesh& tis, float rays[100][2])  // maximum of 100 rays
@@ -294,7 +349,7 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
-    if (d_cell_type[i] == 1) {  // only type 1 one cells advect
+    if (d_cell_type[i] == 1) {  // only type 1 cells advect
         float norm_x = (d_X[i].x - d_tis_min.x) /
                        (d_tis_max.x - d_tis_min.x);  // % along x axis
         float ad_time =
@@ -326,10 +381,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 {
     std::cout << std::fixed
               << std::setprecision(6);  // set precision for floats
+    // h_pm.dt = 0.05 * 0.6 * 0.6 / h_pm.D_v;
 
-    /*
-    Prepare Random Variable for the Implementation of the Wiener Process
-    */
+    // Prepare Random Variable for the Implementation of the Wiener Process
     curandState* d_state;  // define the random number generator on the GPu
     cudaMalloc(&d_state,
         h_pm.n_max * sizeof(curandState));  // allocate GPU memory according to
@@ -355,9 +409,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     cudaMemcpyToSymbol(d_pm, &h_pm, sizeof(Pm));  // copy host params
 
     // Initial conditions
-    Solution<Cell, Gabriel_solver> cells{
-        h_pm.n_max, 50, h_pm.r_max};  // intialise solver
-    *cells.h_n = h_pm.n_0;
+    Solution<Cell, Gabriel_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
+    // Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
+    // *cells.h_n = h_pm.n_0;
 
     float rays[h_pm.n_rays][2];  // initialise rays with default values
     for (int i = 0; i < h_pm.n_rays; i++) {
@@ -369,9 +423,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     cudaMalloc(&d_rays, h_pm.n_rays * 2 * sizeof(float));
 
     if (h_pm.tmode == 0) {
-        random_disk_z(
-            h_pm.init_dist, cells);  // initialise random disk with mean
-                                     // distance between cells of init_dist
+        random_disk_z(h_pm.init_dist, cells);
         for (int i = 0; i < h_pm.n_0; i++) {
             cell_type.h_prop[i] = (std::rand() % 100 < h_pm.A_init)
                                       ? 1
@@ -482,10 +534,17 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
 
     for (int i = 0; i < h_pm.n_0; i++) {  // initialise chemical amounts
-        // cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
-        // cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
-        cells.h_X[i].u = 0;
-        cells.h_X[i].v = 0;
+        cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
+        cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
+        // cells.h_X[i].u = 0;
+        // cells.h_X[i].v = 0;
+        // Mesh tis{"../inits/shape1_mesh_3D.vtk"};
+        // tis.rescale(h_pm.tis_s);
+        // auto y_len = tis.get_maximum().y - tis.get_minimum().y;
+        // if (cells.h_X[i].y > tis.get_maximum().y - (y_len * 0.1)) {
+        //     cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
+        //     cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
+        // }
     }
 
     // Initialise properties and k with zeroes
@@ -575,7 +634,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                 h_pm.dt, generic_function);
             if (h_pm.death_switch)
                 death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X, cells.d_n);
+                    cells.get_d_n(), d_state, cells.d_X, cells.d_n);
         }
 
         if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
