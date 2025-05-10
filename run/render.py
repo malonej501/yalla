@@ -59,7 +59,6 @@ def render_movie():
 
     # Create a plotter
     p = Plotter(interactive=False)
-    p.show(zoom="tight", axes=1 if SHOW_AX else 0)
     p.zoom(ZOOM)
 
     if EXPORT:
@@ -76,8 +75,11 @@ def render_movie():
         pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
         # lims = ((pts.bounds()[0],pts.bounds()[1]),
         # (pts.bounds()[2],pts.bounds()[3]))
-
-        pts.cmap(cmap, C_PROP)
+        if C_PROP == "cell_type":  # ensure cmap for c_type is constant
+            pts.cmap(cmap, C_PROP, vmin=min(cell_types),
+                     vmax=max(cell_types))
+        else:
+            pts.cmap(cmap, C_PROP)
         br = addons.ScalarBar(pts, title=C_PROP)
         info = Text2D(
             txt=(f"i: {i}\n"
@@ -94,10 +96,12 @@ def render_movie():
         frames.append((pts, br, info))
         # Add the mesh to the plotter
         p.remove("cells").add(pts)
-        p.remove("bar").add(br)
         p.remove("info").add(info)
+        p.remove("bar").add(br)
+        # if i == 0:  # only add bar once to avoid flickering
+        #     p.add(br)
+        p.show(zoom="tight", axes=1 if SHOW_AX else 0)  # now means auto axs
 
-        p.render()  # .reset_camera()
         if EXPORT:
             v.add_frame()
 
@@ -596,6 +600,8 @@ def print_help():
         -z [zoom]       Zoom factor for camera view (0.6 is default)
         -w [walk id]    id of the walk being rendered
         -s [step]       Step of the walk being rendered
+        -p [pt size]    Size of the points in the rendering
+                        (default is 12, for z=0.3,p=26)
         """
 
     print(help_message)
@@ -607,7 +613,7 @@ if __name__ == "__main__":
     if "-h" in args:
         print_help()
     else:
-        output_folder = args[0]
+        output_folder = args[0].rstrip("/")  # remove trailing /
         # fetch custom parameters
         if "-e" in args:
             EXPORT = True
@@ -621,6 +627,8 @@ if __name__ == "__main__":
             WALK_ID = int(args[args.index("-w") + 1])
         if "-s" in args:
             STEP = int(args[args.index("-s") + 1])
+        if "-p" in args:
+            PT_SIZE = int(args[args.index("-p") + 1])
 
         FOLDER_PATH = f'../run/{output_folder}'  # directory
 
