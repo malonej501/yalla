@@ -5,7 +5,7 @@ DISPLAY = True
 EXTRUDE = True
 FORMAT = 0  # 0: legacy vtk yalla compatible, 1: new vtk (from vedo)
 SHAPE = 2  # 0: 2D fin shape, 1: 2D rectangular shape,
-EXTRUDE_Z = 0.1 if SHAPE != 2 else 100  # extrude distance in z direction
+EXTRUDE_Z = 0.1  # extrude distance in z direction
 
 # 2: 2D rect with specific dimensions
 
@@ -29,8 +29,8 @@ def get_shape():
 
     if SHAPE == 2:
         # 2D rectangular shape centered at (0,0,0) with specified dimensions
-        ap = 7500  # anterior-posterior length
-        pd = 2500  # proximal-distal height
+        ap = 7.5  # anterior-posterior length mm
+        pd = 2.5  # proximal-distal height mm
         verts = [(-ap/2, pd/2, 0), (ap/2, pd/2, 0),
                  (ap/2, -pd/2, 0), (-ap/2, -pd/2, 0)]
         faces = [[0, 1, 2, 3]]
