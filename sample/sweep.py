@@ -16,7 +16,7 @@ RANGES = {
 }
 STEP = 10  # no. steps between min and max for each parameter
 N_SAMP = 100  # Number of LHS samples
-N_FRAMES = 5  # no. simulation frames to generate per sample
+N_FRAMES = 1  # no. simulation frames to generate per sample
 RUN_ID = "test"
 DEFAULT = pd.read_csv("../params/default.csv")
 
@@ -34,7 +34,6 @@ def gen_sweep_data():
     combos = pd.MultiIndex.from_product(
         [data[param] for param in PARAMS], names=PARAMS)
     df = combos.to_frame(index=False)
-    print(df)
     return df
 
 
@@ -50,14 +49,13 @@ def gen_lhs_data():
     scaled = qmc.scale(sample, l_bounds, u_bounds)
 
     df = pd.DataFrame(scaled, columns=PARAMS)
-    print(df)
     return df
 
 
 def export_to_log(d, i):
     """Saves the parameters to a log file."""
-    log_path = f"log_{RUN_ID}.csv"
 
+    log_path = f"../run/output/log_{RUN_ID}.csv"
     log_exists = os.path.exists(log_path)
     if i == 0 and log_exists:
         os.remove(log_path)
@@ -73,9 +71,11 @@ def export_to_log(d, i):
 def main():
     """Main function to generate and save parameter data."""
 
-    if os.path.exists("../run/sample"):  # initialise run directory
-        os.rmdir("../run/sample")
-    os.mkdir("../run/sample")
+    run_dir = "../run"
+    env = os.environ.copy()
+    env["PATH"] = "/home/m/malone/packages/xvfb/usr/bin:" + env.get("PATH", "")
+    subprocess.run(["rm", "-f", "exec"], check=True, cwd=run_dir)
+    subprocess.run(["rm", "-rf", "output"], check=True, cwd=run_dir)
 
     df = gen_lhs_data()
     for i in range(N_SAMP):
@@ -85,14 +85,15 @@ def main():
         for p in PARAMS:  # sub new set of param values
             d.loc[d["param"] == p, "value"] = df[p].values[i]
         params_to_header(d)
-        export_to_log(d, i)
 
         subprocess.run(["nvcc", "-std=c++14", "-arch=sm_61",
                         "../examples/eggspot.cu", "-o", "exec"
-                        ], check=True)
-        subprocess.run(["./exec", 0, i], check=True)  # run with step id
-
-        exit()
+                        ], check=True, cwd=run_dir)
+        subprocess.run(["./exec", str(0), str(i)], check=True, cwd=run_dir)
+        subprocess.run(["python3", "render.py", "output", "-s", str(i),
+                        "-f", str(2)],
+                       check=True, cwd=run_dir, env=env)
+        export_to_log(d, i)
 
 
 if __name__ == "__main__":
