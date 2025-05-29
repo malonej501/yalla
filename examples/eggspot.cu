@@ -288,32 +288,24 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
     }
 }
 
-__global__ void death(
-    int n_cells, curandState* d_state, Cell* d_X, int* d_n_cells)
+__global__ void death(int n_cells, Cell* d_X, int* d_n_cells)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
-    float r = curand_uniform(&d_state[i]);
 
-    if (d_X[i].u < d_pm.vthresh &&
-        d_cell_type[i] == 3) {            // die if type 3 and u low
+    if (d_X[i].u > d_pm.u_death &&
+        (d_cell_type[i] == 1 ||
+            d_cell_type[i] == 3)) {       // die if type 1/3 and u high
         int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
         // overwrite cell i with last cell in d_X, stop if only one cell left
         if (i < n) {
             d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
+            d_W[i] = d_W[n - 1];
             d_cell_type[i] = d_cell_type[n - 1];
             d_mech_str[i] = d_mech_str[n - 1];
+            d_in_ray[i] = d_in_ray[n - 1];
         }
     }
-    // if (d_cell_type[i] == 2 && r < d_pm.q_death &&
-    //     d_X[i].u < 0.15) {  // die if type 2 and u low
-    //     int n = atomicSub(d_n_cells, 1);
-    //     if (i < n) {
-    //         d_X[i] = d_X[n - 1];
-    //         d_cell_type[i] = d_cell_type[n - 1];
-    //         d_mech_str[i] = d_mech_str[n - 1];
-    //     }
-    // }
 }
 
 void init_rays(Mesh& tis, float rays[100][2])  // maximum of 100 rays
@@ -379,17 +371,12 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
 
 int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 {
-    std::cout << std::fixed
-              << std::setprecision(6);  // set precision for floats
-    // h_pm.dt = 0.05 * 0.6 * 0.6 / h_pm.D_v;
+    std::cout << std::fixed << std::setprecision(6);  // float precision
 
     // Prepare Random Variable for the Implementation of the Wiener Process
-    curandState* d_state;  // define the random number generator on the GPu
-    cudaMalloc(&d_state,
-        h_pm.n_max * sizeof(curandState));  // allocate GPU memory according to
-                                            // no. cells
-    auto seed =
-        time(NULL);  // random number seed - coupled to the time on your machine
+    curandState* d_state;  // define the random number generator on the GPU
+    cudaMalloc(&d_state, h_pm.n_max * sizeof(curandState));  // GPU mem alloc
+    auto seed = time(NULL);  // random number seed from machine time
     setup_rand_states<<<(h_pm.n_max + 32 - 1) / 32, 32>>>(
         h_pm.n_max, seed, d_state);  // configuring the random number generator
                                      // on the GPU (provided by utils.cuh)
@@ -397,8 +384,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     /* create host variables*/
     // you first create an instance of the Property class on the host, then
     // you connect it to the global variable defined on the device with
-    Property<Cell> W{
-        h_pm.n_max, "wiener_process"};  // weiner process random number
+    Property<Cell> W{h_pm.n_max, "wiener_process"};  // weiner process
     cudaMemcpyToSymbol(d_W, &W.d_prop, sizeof(d_W));
     Property<float> mech_str{h_pm.n_max, "mech_str"};
     cudaMemcpyToSymbol(d_mech_str, &mech_str.d_prop, sizeof(d_mech_str));
@@ -408,9 +394,10 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     cudaMemcpyToSymbol(d_in_ray, &in_ray.d_prop, sizeof(d_in_ray));
     cudaMemcpyToSymbol(d_pm, &h_pm, sizeof(Pm));  // copy host params
 
-    // Initial conditions
-    Solution<Cell, Gabriel_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
-    // Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
+    // Solver
+    // Solution<Cell, Gabriel_solver> cells{h_pm.n_max, h_pm.g_size,
+    // h_pm.r_max}; args are n_max, grid_size, cube_size, gabriel_coefficient
+    Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
     // *cells.h_n = h_pm.n_0;
 
     float rays[h_pm.n_rays][2];  // initialise rays with default values
@@ -418,17 +405,15 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         rays[i][0] = 0;
         rays[i][1] = 0;
     }
-    // Allocate memory for rays on the device
     float (*d_rays)[2];
-    cudaMalloc(&d_rays, h_pm.n_rays * 2 * sizeof(float));
+    cudaMalloc(&d_rays, h_pm.n_rays * 2 * sizeof(float));  // GPU mem alloc
 
     if (h_pm.tmode == 0) {
         random_disk_z(h_pm.init_dist, cells);
         for (int i = 0; i < h_pm.n_0; i++) {
             cell_type.h_prop[i] = (std::rand() % 100 < h_pm.A_init)
-                                      ? 1
-                                      : 2;  // randomly assign a proportion of
-                                            // initial cells with each type
+                                      ? 1   // randomly assign a proportion of
+                                      : 2;  // initial cells with each type
         }
     }
     if (h_pm.tmode == 1) {
@@ -447,14 +432,13 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             std::round(std::sqrt(h_pm.n_0) / 10) * 10, cells);
         for (int i = 0; i < h_pm.n_0; i++) {
             cell_type.h_prop[i] = (i < h_pm.n_0 - sp_size)
-                                      ? 2
-                                      : 1;  // set cell type to 1 for spot
-                                            // cells, and 2 for all others
+                                      ? 2   // set cell type to 1 for spot
+                                      : 1;  // cells, and 2 for all others
         }
     }
     if (h_pm.tmode ==
         3) {  // cut the tissue mesh out of a random cloud of cells
-        Mesh tis{"../inits/shape1_mesh_3D.vtk"};
+        Mesh tis{"../inits/shape2_mesh_3D.vtk"};
         tis.rescale(h_pm.tis_s);  // expand the mesh to fit to the boundaries
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
@@ -468,13 +452,12 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         *cells.h_n = std::distance(cells.h_X, new_n);
         for (int i = 0; i < h_pm.n_0; i++) {  // set cell types
             cell_type.h_prop[i] = (std::rand() % 100 < h_pm.A_init)
-                                      ? 1
-                                      : 2;  // set cell type to 1 for spot
-                                            // cells, and 2 for all others
+                                      ? 1   // set cell type to 1 for spot
+                                      : 2;  // cells, and 2 for all others
         }
     }
     if (h_pm.tmode == 4) {  // cut the fin mesh out of a random cloud of cells
-        Mesh tis{"../inits/shape1_mesh_3D.vtk"};
+        Mesh tis{"../inits/shape2_mesh_3D.vtk"};
         tis.rescale(h_pm.tis_s);
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
@@ -634,7 +617,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                 h_pm.dt, generic_function);
             if (h_pm.death_switch)
                 death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), d_state, cells.d_X, cells.d_n);
+                    cells.get_d_n(), cells.d_X, cells.d_n);
         }
 
         if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
@@ -647,8 +630,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             output.write_property(mech_str);
             output.write_property(cell_type);
             output.write_property(in_ray);
-            output.write_field(cells, "u",
-                &Cell::u);  // write the u part of each cell to vtk
+            output.write_field(cells, "u", &Cell::u);
             output.write_field(cells, "v", &Cell::v);
         }
     }
