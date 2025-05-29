@@ -288,12 +288,15 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
     }
 }
 
-__global__ void death(int n_cells, Cell* d_X, int* d_n_cells)
+__global__ void death(
+    int n_cells, Cell* d_X, int* d_n_cells, curandState* d_state)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
+    float r = curand_uniform(&d_state[i]);
 
-    if (d_X[i].u > d_pm.u_death &&
+    // if (d_X[i].u > 0.4 && d_X[i].u < 0.43 && r < d_pm.q_death &&
+    if (d_X[i].u > d_pm.u_death && r < d_pm.q_death &&
         (d_cell_type[i] == 1 ||
             d_cell_type[i] == 3)) {       // die if type 1/3 and u high
         int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
@@ -617,7 +620,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                 h_pm.dt, generic_function);
             if (h_pm.death_switch)
                 death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X, cells.d_n);
+                    cells.get_d_n(), cells.d_X, cells.d_n, d_state);
         }
 
         if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
@@ -640,5 +643,11 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 // compile tissue_sim as main when this file is not included as library
 // elsewhere
 #ifndef COMPILE_AS_LIBRARY
-int main(int argc, char const* argv[]) { return tissue_sim(argc, argv); }
+int main(int argc, char const* argv[])
+{
+    int walk_id = 0, step = 0;
+    if (argc > 1) walk_id = std::atoi(argv[1]);
+    if (argc > 2) step = std::atoi(argv[2]);
+    return tissue_sim(argc, argv, walk_id, step);
+}
 #endif
