@@ -41,8 +41,9 @@ def render_frame():
     vtk = VTKS[-1]  # select final frame
     cmap = "viridis"
     points = Points(vtk).point_size(PT_SIZE * ZOOM).cmap(cmap, C_PROP)
-    p = show(points, offscreen=True)
+    p = show(points, interactive=False)
     p.screenshot(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_{len(VTKS)-1}.png")
+    p.close()
     display.stop()
 
 
@@ -63,8 +64,8 @@ def render_movie():
 
     if EXPORT:
         v = Video(
-            name=f"../run/saves/{FOLDER_PATH.rsplit('/', maxsplit=1)[-1]
-                                 }_{C_PROP}.mp4",
+            name=f"../run/saves/{FOLDER_PATH.rsplit('/', maxsplit=1)[-1]}" +
+            "_{C_PROP}.mp4",
             duration=video_length,
             backend="imageio")
 
@@ -82,12 +83,14 @@ def render_movie():
             pts.cmap(cmap, C_PROP)
         br = addons.ScalarBar(pts, title=C_PROP)
         info = Text2D(
-            txt=(f"i: {i}\n"
-                 f"n: {len(pts.vertices)}\n" +
-                 "".join([f"n_{cell_type}: {
-                     len(pts.pointdata['cell_type'][
-                         pts.pointdata['cell_type'] == cell_type])}\n" for
-                     cell_type in cell_types])),
+            txt=(
+                f"i: {i}\n"
+                f"n: {len(pts.vertices)}\n" +
+                "".join([
+                    f"n_{cell_type}: {len(pts.pointdata['cell_type'][pts.pointdata['cell_type'] == cell_type])}\n"
+                    for cell_type in cell_types
+                ])
+            ),
             pos="bottom-left")
 
         pts.name = "cells"
