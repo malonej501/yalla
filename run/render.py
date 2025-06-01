@@ -65,7 +65,7 @@ def render_movie():
     if EXPORT:
         v = Video(
             name=f"../run/saves/{FOLDER_PATH.rsplit('/', maxsplit=1)[-1]}" +
-            "_{C_PROP}.mp4",
+            f"_{C_PROP}.mp4",
             duration=video_length,
             backend="imageio")
 
