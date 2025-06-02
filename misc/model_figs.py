@@ -170,14 +170,14 @@ def plot_force_and_potential():
             A: A_val, a: a_val, R: R_val, r: r_val, d: d_val
         }) for d_val in d_vals]
         axs[1].plot(d_vals, f_vals, color=f"C{itype}")
-        axs[1].set_ylabel(r"Force ($\mu m t^{-1}$)")
+        axs[1].set_ylabel(r"Force ($mm t^{-1}$)")
         # axs[1].set_ylim(-10)
 
     for ax in axs.flat:
         ax.set_xlim(0, r_max_val)
         ax.grid(alpha=0.3)
         # ax.set_yscale("log")
-    fig.supxlabel(r"Separation distance($\mu m $)")
+    fig.supxlabel(r"Separation distance ($mm $)")
     fig.legend(loc="outside right", title="Interaction")
     plt.show()
 
