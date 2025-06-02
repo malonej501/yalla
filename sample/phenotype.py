@@ -1,14 +1,16 @@
-import sys
 import os
 import math
 import numpy as np
 import pandas as pd
-from vedo import Plotter, Points, show, addons, Text2D, Mesh, Line, Video
-from vedo import load, image, pyplot
+from vedo import Points, show, load
 from sklearn.cluster import DBSCAN
 import alphashape
 import shapely
 from pyvirtualdisplay import Display
+import h5py
+import matplotlib.pyplot as plt
+from skimage.measure import regionprops, label
+from skimage.color import label2rgb
 
 
 class Frame():
@@ -105,6 +107,98 @@ class Frame():
             pt__size * zoom).cmap(cmap, c_prop)
         p = show(points, interactive=False)
         p.screenshot(
-            f"../run/{self.run_id}/out_{self.wid}_{self.step}_{self.frame}.png")
+            f"../run/{self.run_id}/out_{self.wid}_{self.step}" +
+            f"_{self.frame}.png")
         p.close()
         display.stop()
+
+
+class Realfin():
+    """Data from a real fin segmented to a .h5 file."""
+
+    def __init__(self, path):
+        self.path = path  # file name of the .h5 file
+        self.id = os.path.basename(path).split(".")[0]
+        with h5py.File(path, "r") as f:
+            self.arr = np.squeeze(np.array(f["exported_data"]))
+            self.total_area = self.arr.shape[0] * self.arr.shape[1]
+        self.arr_lab = label(self.arr)  # label connected regions
+        self.regions = regionprops(self.arr_lab)
+        self.regions_sig = [  # remove very large and small regions
+            r for r in self.regions if ((r.area < 0.5 * self.total_area) &
+                                        (r.area > 0.001 * self.total_area))]
+
+    def phenotype(self):
+        """Returns the phenotype of the real fin."""
+
+        stats_full = []
+        for r in self.regions_sig:
+            stats_full.append({
+                "label": r.label,
+                "n_regions": len(self.regions_sig),
+                "area": r.area,
+                "roundness": (4 * math.pi * r.area) / (r.perimeter**2),
+            })
+
+        stats_full = pd.DataFrame(stats_full)
+        print(stats_full)
+
+        stats = {
+            "id": self.id,
+            "n_regions": stats_full["n_regions"].iloc[0],
+            "mean_area": stats_full["area"].mean(),
+            "std_area": stats_full["area"].std(),
+            "mean_roundness": stats_full["roundness"].mean(),
+            "std_roundness": stats_full["roundness"].std()
+        }
+
+        return stats
+
+    def plot_regions(self):
+        """Plots the regions marked as spots in the fin."""
+        image_label_overlay = label2rgb(self.arr_lab, bg_label=0)
+        plt.figure(figsize=(8, 8))
+        plt.imshow(image_label_overlay)
+
+        for r in self.regions_sig:
+            y, x = r.centroid
+            plt.text(x, y, str(r.label),
+                     fontsize=12, ha='center', va='center')
+
+        plt.title(f"Regions in {self.id}")
+        plt.show()
+
+
+def analyse_realfins(fin_dir="../data"):
+    """Phenotype real fins in data directory."""
+
+    bins = 10
+
+    stats = []
+    for file in os.listdir(fin_dir):
+        if file.endswith(".h5"):
+            fin = Realfin(path=os.path.join(fin_dir, file))
+            stats.append(fin.phenotype())
+            fin.plot_regions()
+
+    stats = pd.DataFrame(stats)
+
+    fig, axs = plt.subplots(2, 2, figsize=(6, 6), layout="constrained")
+    axs[0, 0].hist(stats["n_regions"], bins)
+    axs[0, 0].set_title("Number of Regions")
+    axs[0, 1].hist(stats["mean_area"], bins)
+    axs[0, 1].set_title("Mean Area")
+    axs[1, 0].hist(stats["mean_roundness"], bins)
+    axs[1, 0].set_title("Mean Roundness")
+    axs[1, 1].axis("off")
+
+    fig.suptitle(fr"Real Fin Phenotype Statistics $N={len(stats)}$")
+
+    plt.show()
+
+
+if __name__ == "__main__":
+    analyse_realfins()
+    # print(stats)
+    # plt.imshow(fin.arr, cmap="gray")
+    # plt.show()

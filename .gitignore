@@ -17,3 +17,4 @@ backups
 *.h
 *.csv
 *.pyc
+*.h5
