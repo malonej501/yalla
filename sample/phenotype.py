@@ -11,6 +11,7 @@ import h5py
 import matplotlib.pyplot as plt
 from skimage.measure import regionprops, label
 from skimage.color import label2rgb
+from PIL import Image
 
 
 class Frame():
@@ -154,19 +155,29 @@ class Realfin():
 
         return stats
 
-    def plot_regions(self):
-        """Plots the regions marked as spots in the fin."""
+    def plot_regions(self, display=False, export=False, ax=None):
+        """Plots the regions marked as spots in the fin. Returns axis."""
         image_label_overlay = label2rgb(self.arr_lab, bg_label=0)
-        plt.figure(figsize=(8, 8))
-        plt.imshow(image_label_overlay)
+        created_fig = False
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 8))
+            created_fig = True
+        ax.imshow(image_label_overlay)
 
         for r in self.regions_sig:
             y, x = r.centroid
-            plt.text(x, y, str(r.label),
-                     fontsize=12, ha='center', va='center')
+            ax.text(x, y, str(r.label),
+                    fontsize=12, ha='center', va='center')
 
-        plt.title(f"Regions in {self.id}")
-        plt.show()
+        ax.set_title(f"Regions in {self.id}")
+        if export:
+            plt.savefig(f"../data/{self.id}_regions.png")
+        if display:
+            plt.show()
+        if created_fig:
+            plt.close(fig)
+
+        return ax
 
 
 def analyse_realfins(fin_dir="../data"):
@@ -179,7 +190,7 @@ def analyse_realfins(fin_dir="../data"):
         if file.endswith(".h5"):
             fin = Realfin(path=os.path.join(fin_dir, file))
             stats.append(fin.phenotype())
-            fin.plot_regions()
+            fin.plot_regions(display=True)
 
     stats = pd.DataFrame(stats)
 
@@ -197,8 +208,47 @@ def analyse_realfins(fin_dir="../data"):
     plt.show()
 
 
+def plot_segmented_fins(fin_dir="../data"):
+    """Plots the segmented fins in the data directory."""
+    for file in os.listdir(fin_dir):
+        if file.endswith(".h5"):
+            fin = Realfin(path=os.path.join(fin_dir, file))
+            fin.plot_regions(display=False, export=True)
+
+
+def compare_segmented_real(fin_dir="../data"):
+    """Plot segmented and real fins side by side."""
+    hfiles = [f for f in os.listdir(fin_dir) if f.endswith(".h5")]
+    pngs = [f.replace("_Simple Segmentation", "").replace(".h5", ".png")
+            for f in hfiles]
+    n = len(hfiles)
+    assert len(pngs) == n, "Mismatch between .h5 and .png files."
+    if n == 0:
+        print("No .h5 files found.")
+        return
+
+    fig, axs = plt.subplots(n, 2, figsize=(6, 1 * n), layout="constrained")
+    if n == 1:
+        axs = [axs]  # Ensure axs is always iterable as a list of pairs
+
+    for i, file in enumerate(hfiles):
+        png = Image.open(os.path.join(fin_dir, pngs[i]))
+        seg = Realfin(path=os.path.join(fin_dir, file))
+        print(png)
+        print(seg)
+        print(seg.plot_regions(display=False, export=False))
+        seg.plot_regions(display=False, export=False, ax=axs[i][1])
+        axs[i][1].set_title(f"Segmented Fin: {seg.id}")
+        axs[i][0].imshow(png)
+        axs[i][0].set_title(f"Labeled Regions: {pngs[i]}")
+
+    plt.show()
+
+
 if __name__ == "__main__":
-    analyse_realfins()
+    # analyse_realfins()
+    # plot_segmented_fins()
+    compare_segmented_real()
     # print(stats)
     # plt.imshow(fin.arr, cmap="gray")
     # plt.show()
