@@ -10,6 +10,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/remove.h>
 
+#include <cmath>
 #include <iterator>
 
 #include "../include/dtypes.cuh"
@@ -261,31 +262,32 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
 
     // spot cells become static when u is high
     // if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 3;
-    // if (d_pm.tmode == 5) {  // switching for non-advecting/advecting spot
-    // cells
-    //     float top_y = d_tis_max.y - (0.4 * (d_tis_max.y - d_tis_min.y));
-    //     float bot_y = d_tis_min.y + (0.4 * (d_tis_max.y - d_tis_min.y));
-    //     if (d_cell_type[i] == 1 && d_X[i].u > 0.5 && d_X[i].y < top_y &&
-    //         d_X[i].y > bot_y)
-    //         d_cell_type[i] = 3;  // don't switch if still in top 10% of
-    //         tissue
-    // }
+    if (d_pm.tmode == 5) {  // switching for non-advecting/advecting spot
+                            // cells
+        float top_y = d_tis_max.y - (0.4 * (d_tis_max.y - d_tis_min.y));
+        float bot_y = d_tis_min.y + (0.4 * (d_tis_max.y - d_tis_min.y));
+        // printf("top_y: %f, bot_y: %f\n", top_y, bot_y);
+        if (d_cell_type[i] == 1 && d_X[i].u > 0.4 && d_X[i].y < top_y &&
+            d_X[i].y > bot_y)
+            d_cell_type[i] = 3;  // don't switch if still in top 10% of
+                                 // tissue
+    }
     // if (d_cell_type[i] == 2 && d_X[i].u > 180) {
     //     d_cell_type[i] = 1;  // switch to spot cell if u high
     // }
     // if (d_cell_type[i] == 1 && d_X[i].u < 180) {
     //     d_cell_type[i] = 2;  // switch to non-spot cell if u low
     // }
-    float top_y = d_tis_max.y - (0.2 * (d_tis_max.y - d_tis_min.y));
-    float bot_y = d_tis_min.y + (0.2 * (d_tis_max.y - d_tis_min.y));
-    if (d_X[i].y < top_y && d_X[i].y > bot_y) {
-        if (d_cell_type[i] == 1 && d_X[i].v > d_pm.vthresh) {
-            d_cell_type[i] = 3;  // switch to spot cell if u high
-        }
-        if (d_cell_type[i] == 3 && d_X[i].v < d_pm.vthresh) {
-            d_cell_type[i] = 2;  // switch to non-spot cell if u low
-        }
-    }
+    // float top_y = d_tis_max.y - (0.2 * (d_tis_max.y - d_tis_min.y));
+    // float bot_y = d_tis_min.y + (0.2 * (d_tis_max.y - d_tis_min.y));
+    // if (d_X[i].y < top_y && d_X[i].y > bot_y) {
+    //     if (d_cell_type[i] == 1 && d_X[i].v > d_pm.vthresh) {
+    //         d_cell_type[i] = 3;  // switch to spot cell if u high
+    //     }
+    //     if (d_cell_type[i] == 3 && d_X[i].v < d_pm.vthresh) {
+    //         d_cell_type[i] = 2;  // switch to non-spot cell if u low
+    //     }
+    // }
 }
 
 __global__ void death(
@@ -295,8 +297,8 @@ __global__ void death(
     if (i >= n_cells) return;
     float r = curand_uniform(&d_state[i]);
 
-    // if (d_X[i].u > 0.4 && d_X[i].u < 0.43 && r < d_pm.q_death &&
-    if (d_X[i].u > d_pm.u_death && r < d_pm.q_death &&
+    // if (d_X[i].u > 0.4 && d_X[i].u < 0.43 &&
+    if (d_X[i].u > d_pm.u_death &&
         (d_cell_type[i] == 1 ||
             d_cell_type[i] == 3)) {       // die if type 1/3 and u high
         int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
@@ -324,17 +326,23 @@ void init_rays(Mesh& tis, float rays[100][2])  // maximum of 100 rays
         p_min = tis.get_minimum().y;
         p_max = tis.get_maximum().y;
     }
-    float step;
-    step = (p_max - p_min) / (h_pm.n_rays - 1);
-    if (h_pm.n_rays < 2)
-        step = (p_max - p_min) / 2;  // if only one ray, set to middle
 
-    for (int i = 0; i < h_pm.n_rays; i++) {
-        float p1 = p_min + i * step;  // start of ray either x or y line
-        float p2 = p1 + (h_pm.s_ray * (p_max - p_min));  // scale by tissue size
-        // x_pairs.push_back({x1, x2});
-        rays[i][0] = p1;
-        rays[i][1] = p2;
+    if (h_pm.n_rays < 2) {  // if only one ray, set to middle
+        float center = (p_max + p_min) / 2;
+        float p1 = center - (h_pm.s_ray * (p_max - p_min) / 2);
+        float p2 = center + (h_pm.s_ray * (p_max - p_min) / 2);
+        rays[0][0] = p1;  // start of ray either x or y line
+        rays[0][1] = p2;  // end of ray either x or y line
+    } else {
+        for (int i = 0; i < h_pm.n_rays; i++) {
+            float step = (p_max - p_min) / (h_pm.n_rays - 1);
+            float p1 = p_min + i * step;  // start of ray either x or y line
+            float p2 =
+                p1 + (h_pm.s_ray * (p_max - p_min));  // scale by tissue size
+            // x_pairs.push_back({x1, x2});
+            rays[i][0] = p1;
+            rays[i][1] = p2;
+        }
     }
 }
 
@@ -489,7 +497,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         }
     }
     if (h_pm.tmode == 5) {  // fin with spot aggregation at top
-        Mesh tis{"../inits/shape1_mesh_3D.vtk"};
+        Mesh tis{"../inits/shape2_mesh_3D.vtk"};
         tis.rescale(h_pm.tis_s);
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
