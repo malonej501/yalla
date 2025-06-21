@@ -123,7 +123,7 @@ class Realfin():
         with h5py.File(path, "r") as f:
             self.arr = np.squeeze(np.array(f["exported_data"]))
             self.total_area = self.arr.shape[0] * self.arr.shape[1]
-        self.arr_lab = label(self.arr)  # label connected regions
+        self.arr_lab = label(self.arr, background=2)  # label connected regions
         self.regions = regionprops(self.arr_lab)
         self.regions_sig = [  # remove very large and small regions
             r for r in self.regions if ((r.area < 0.5 * self.total_area) &
@@ -157,26 +157,25 @@ class Realfin():
 
     def plot_regions(self, display=False, export=False, ax=None):
         """Plots the regions marked as spots in the fin. Returns axis."""
-        image_label_overlay = label2rgb(self.arr_lab, bg_label=0)
-        created_fig = False
+        image_label_overlay = label2rgb(self.arr_lab,
+                                        bg_color=(1, 1, 1))
+        fig = None
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 8))
-            created_fig = True
         ax.imshow(image_label_overlay)
 
         for r in self.regions_sig:
             y, x = r.centroid
-            ax.text(x, y, str(r.label),
-                    fontsize=12, ha='center', va='center')
+            ax.text(x, y - (self.arr.shape[1]*0.08), str(r.label),
+                    fontsize=10, ha='center', va='center')
 
-        ax.set_title(f"Regions in {self.id}")
+        ax.set_title(f"{self.id}")
         if export:
             plt.savefig(f"../data/{self.id}_regions.png")
         if display:
             plt.show()
-        if created_fig:
+        if fig is not None:
             plt.close(fig)
-
         return ax
 
 
@@ -226,21 +225,26 @@ def compare_segmented_real(fin_dir="../data"):
     if n == 0:
         print("No .h5 files found.")
         return
+    ncol = 4
+    nrow = math.ceil(n / ncol)
+    _, axs = plt.subplots(nrow, ncol * 2, figsize=(
+        4*ncol, 1.5 * nrow), layout="constrained")
 
-    fig, axs = plt.subplots(n, 2, figsize=(6, 1 * n), layout="constrained")
     if n == 1:
         axs = [axs]  # Ensure axs is always iterable as a list of pairs
+    axs = axs.reshape(-1, ncol * 2)
 
     for i, file in enumerate(hfiles):
         png = Image.open(os.path.join(fin_dir, pngs[i]))
         seg = Realfin(path=os.path.join(fin_dir, file))
-        print(png)
-        print(seg)
-        print(seg.plot_regions(display=False, export=False))
-        seg.plot_regions(display=False, export=False, ax=axs[i][1])
-        axs[i][1].set_title(f"Segmented Fin: {seg.id}")
-        axs[i][0].imshow(png)
-        axs[i][0].set_title(f"Labeled Regions: {pngs[i]}")
+        row = i // ncol
+        col = (i % ncol) * 2
+        axs[row][col].imshow(png)
+        axs[row][col].axis("off")
+        seg.plot_regions(display=False, export=False, ax=axs[row][col + 1])
+        axs[row][col + 1].set_title("")
+        axs[row][col + 1].set_xticks([])
+        axs[row][col + 1].set_yticks([])
 
     plt.show()
 
