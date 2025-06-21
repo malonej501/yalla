@@ -132,8 +132,19 @@ class Realfin():
     def phenotype(self):
         """Returns the phenotype of the real fin."""
 
+        if len(self.regions_sig) == 0:
+            print(f"No significant regions found in {self.id}.")
+            return {
+                "id": self.id,
+                "n_regions": 0,
+                "mean_area": np.nan,
+                "std_area": np.nan,
+                "mean_roundness": np.nan,
+                "std_roundness": np.nan
+            }
+
         stats_full = []
-        for r in self.regions_sig:
+        for r in self.regions_sig:  # only do stats for significant regions
             stats_full.append({
                 "label": r.label,
                 "n_regions": len(self.regions_sig),
@@ -143,8 +154,7 @@ class Realfin():
 
         stats_full = pd.DataFrame(stats_full)
         print(stats_full)
-
-        stats = {
+        return {
             "id": self.id,
             "n_regions": stats_full["n_regions"].iloc[0],
             "mean_area": stats_full["area"].mean(),
@@ -152,8 +162,6 @@ class Realfin():
             "mean_roundness": stats_full["roundness"].mean(),
             "std_roundness": stats_full["roundness"].std()
         }
-
-        return stats
 
     def plot_regions(self, display=False, export=False, ax=None):
         """Plots the regions marked as spots in the fin. Returns axis."""
@@ -189,19 +197,20 @@ def analyse_realfins(fin_dir="../data"):
         if file.endswith(".h5"):
             fin = Realfin(path=os.path.join(fin_dir, file))
             stats.append(fin.phenotype())
-            fin.plot_regions(display=True)
+            fin.plot_regions()
 
     stats = pd.DataFrame(stats)
 
     fig, axs = plt.subplots(2, 2, figsize=(6, 6), layout="constrained")
     axs[0, 0].hist(stats["n_regions"], bins)
-    axs[0, 0].set_title("Number of Regions")
+    axs[0, 0].set_xlabel("No. Regions")
     axs[0, 1].hist(stats["mean_area"], bins)
-    axs[0, 1].set_title("Mean Area")
+    axs[0, 1].set_xlabel("Mean Area")
     axs[1, 0].hist(stats["mean_roundness"], bins)
-    axs[1, 0].set_title("Mean Roundness")
+    axs[1, 0].set_xlabel("Mean Roundness")
     axs[1, 1].axis("off")
 
+    fig.supylabel("Frequency")
     fig.suptitle(fr"Real Fin Phenotype Statistics $N={len(stats)}$")
 
     plt.show()
@@ -250,9 +259,9 @@ def compare_segmented_real(fin_dir="../data"):
 
 
 if __name__ == "__main__":
-    # analyse_realfins()
+    analyse_realfins()
     # plot_segmented_fins()
-    compare_segmented_real()
+    # compare_segmented_real()
     # print(stats)
     # plt.imshow(fin.arr, cmap="gray")
     # plt.show()
