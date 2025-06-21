@@ -11,6 +11,7 @@ import h5py
 import matplotlib.pyplot as plt
 from skimage.measure import regionprops, label
 from skimage.color import label2rgb
+from scipy.spatial import Delaunay, ConvexHull
 from PIL import Image
 
 
@@ -154,13 +155,16 @@ class Realfin():
 
         stats_full = pd.DataFrame(stats_full)
         print(stats_full)
+        mesh_stats, _, _ = self.mesh()
         return {
             "id": self.id,
             "n_regions": stats_full["n_regions"].iloc[0],
             "mean_area": stats_full["area"].mean(),
             "std_area": stats_full["area"].std(),
             "mean_roundness": stats_full["roundness"].mean(),
-            "std_roundness": stats_full["roundness"].std()
+            "std_roundness": stats_full["roundness"].std(),
+            "mesh_area": mesh_stats["mesh_area"],
+            "av_dist": mesh_stats["av_dist"]
         }
 
     def plot_regions(self, display=False, export=False, ax=None):
@@ -186,6 +190,74 @@ class Realfin():
             plt.close(fig)
         return ax
 
+    def mesh(self, display=False, ax=None):
+        """Returns a mesh from the spot pattern centroids. If there are
+        4 or more significant regions, a Delaunay triangulation is returned,
+        3 returns convex hull, 2 a line and 1 a single point."""
+        mesh = None
+        area = 0
+        av_dist = 0  # average distance between centroids
+        centroids = np.array([r.centroid for r in self.regions_sig])
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 8))
+        ax.imshow(self.arr, cmap="gray")
+        # ax.text(1, 1, f"N={len(centroids)}", ha='center', va='center')
+        ax.set_title(self.id)
+
+        if len(centroids) == 0:
+            print(f"0 significant regions in {self.id}. Not "
+                  + "enough to construct mesh.")
+        if len(centroids) == 1:
+            mesh = np.array([centroids[0, 1], centroids[0, 0]])
+            ax.plot(centroids[0, 1], centroids[0, 0], "ro")
+        if len(centroids) == 2:
+            mesh = np.array([[centroids[0, 1], centroids[0, 0]],
+                             [centroids[1, 1], centroids[1, 0]]])
+            av_dist = np.linalg.norm(centroids[0, :2] - centroids[1, :2])
+            ax.plot(centroids[:, 1], centroids[:, 0], color="red")
+        if len(centroids) == 3:
+            mesh = ConvexHull(centroids)
+            area = mesh.volume
+            for simplex in mesh.simplices:
+                av_dist += np.linalg.norm(
+                    centroids[simplex[0], :2] - centroids[simplex[1], :2])
+                ax.plot(centroids[simplex, 1],
+                        centroids[simplex, 0], color="red")
+            av_dist /= len(mesh.simplices)  # calculate average distance
+        if len(centroids) >= 4:
+            mesh = Delaunay(centroids[:, :2])  # triangulate the points
+            for simplex in mesh.simplices:
+                av_dist += np.linalg.norm(
+                    centroids[simplex[0], :2] - centroids[simplex[1], :2])
+                pts = centroids[simplex, :2]
+                # Shoelace formula for triangle area
+                a = 0.5 * abs(
+                    pts[0, 0]*(pts[1, 1]-pts[2, 1]) +
+                    pts[1, 0]*(pts[2, 1]-pts[0, 1]) +
+                    pts[2, 0]*(pts[0, 1]-pts[1, 1])
+                )
+            av_dist /= len(mesh.simplices)  # calculate average distance
+            area += a
+            ax.triplot(centroids[:, 1], centroids[:, 0],
+                       mesh.simplices, color="red")
+        ax.text(0.05, 0.05, f"N={len(centroids)}\narea={area:.2f}" +
+                f"\nav_dist={av_dist:.2f}",
+                transform=ax.transAxes, ha='left', va='bottom')
+
+        if display:
+            plt.show()
+        plt.close(fig)
+
+        stats = {
+            "id": self.id,
+            "n_regions": len(self.regions_sig),
+            "mesh_area": area,
+            "av_dist": av_dist
+        }
+
+        return stats, mesh, ax
+
 
 def analyse_realfins(fin_dir="../data"):
     """Phenotype real fins in data directory."""
@@ -200,16 +272,17 @@ def analyse_realfins(fin_dir="../data"):
             fin.plot_regions()
 
     stats = pd.DataFrame(stats)
+    print(stats)
 
-    fig, axs = plt.subplots(2, 2, figsize=(6, 6), layout="constrained")
-    axs[0, 0].hist(stats["n_regions"], bins)
-    axs[0, 0].set_xlabel("No. Regions")
-    axs[0, 1].hist(stats["mean_area"], bins)
-    axs[0, 1].set_xlabel("Mean Area")
-    axs[1, 0].hist(stats["mean_roundness"], bins)
-    axs[1, 0].set_xlabel("Mean Roundness")
-    axs[1, 1].axis("off")
-
+    plot_vars = ["n_regions", "mean_area",
+                 "mean_roundness", "mesh_area", "av_dist"]
+    fig, axs = plt.subplots(3, 2, figsize=(
+        6, 6), layout="constrained", sharey=True)
+    axs = axs.flat
+    for i, plot_var in enumerate(plot_vars):
+        axs[i].hist(stats[plot_var], bins)
+        axs[i].set_xlabel(plot_var)
+        axs[i].grid(alpha=0.3)
     fig.supylabel("Frequency")
     fig.suptitle(fr"Real Fin Phenotype Statistics $N={len(stats)}$")
 
@@ -224,8 +297,14 @@ def plot_segmented_fins(fin_dir="../data"):
             fin.plot_regions(display=False, export=True)
 
 
-def compare_segmented_real(fin_dir="../data"):
-    """Plot segmented and real fins side by side."""
+def compare_segmented_real(fin_dir="../data", export=False, mode=0):
+    """Plot segmented and real fins side by side.
+    Args:
+        fin_dir     directory containing the .h5 files of segmented fins.
+        export      if True, saves the figure as a PDF.
+        mode        0 segmented vs real
+                    1 segmented + mesh vs real
+    """
     hfiles = [f for f in os.listdir(fin_dir) if f.endswith(".h5")]
     pngs = [f.replace("_Simple Segmentation", "").replace(".h5", ".png")
             for f in hfiles]
@@ -250,10 +329,15 @@ def compare_segmented_real(fin_dir="../data"):
         col = (i % ncol) * 2
         axs[row][col].imshow(png)
         axs[row][col].axis("off")
-        seg.plot_regions(display=False, export=False, ax=axs[row][col + 1])
+        if mode == 0:
+            seg.plot_regions(display=False, export=False, ax=axs[row][col + 1])
+        elif mode == 1:
+            seg.mesh(display=False, ax=axs[row][col + 1])
         axs[row][col + 1].set_title("")
         axs[row][col + 1].set_xticks([])
         axs[row][col + 1].set_yticks([])
+    if export:
+        plt.savefig(f"../data/real_seg_comp_{n}.pdf", dpi=300)
 
     plt.show()
 
@@ -261,7 +345,9 @@ def compare_segmented_real(fin_dir="../data"):
 if __name__ == "__main__":
     analyse_realfins()
     # plot_segmented_fins()
-    # compare_segmented_real()
+    # compare_segmented_real(export=True, mode=1)
+    # Realfin(path="../data/1_13-10-22_Simple Segmentation.h5").mesh(True)
+
     # print(stats)
     # plt.imshow(fin.arr, cmap="gray")
     # plt.show()
