@@ -199,6 +199,7 @@ class Realfin():
         av_dist = 0  # average distance between centroids
         centroids = np.array([r.centroid for r in self.regions_sig])
 
+        fig = None
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 8))
         ax.imshow(self.arr, cmap="gray")
@@ -247,7 +248,8 @@ class Realfin():
 
         if display:
             plt.show()
-        plt.close(fig)
+        if not display and fig is not None:
+            plt.close(fig)  # ensure no figures left open
 
         stats = {
             "id": self.id,
@@ -337,15 +339,15 @@ def compare_segmented_real(fin_dir="../data", export=False, mode=0):
         axs[row][col + 1].set_xticks([])
         axs[row][col + 1].set_yticks([])
     if export:
-        plt.savefig(f"../data/real_seg_comp_{n}.pdf", dpi=300)
+        plt.savefig(f"../data/real_seg_comp_{n}_{mode}.pdf", dpi=300)
 
     plt.show()
 
 
 if __name__ == "__main__":
-    analyse_realfins()
+    # analyse_realfins()
     # plot_segmented_fins()
-    # compare_segmented_real(export=True, mode=1)
+    compare_segmented_real(export=True, mode=0)
     # Realfin(path="../data/1_13-10-22_Simple Segmentation.h5").mesh(True)
 
     # print(stats)
