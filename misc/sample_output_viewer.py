@@ -1,9 +1,10 @@
+# Visualize a grid of image thumbnails with filenames
 import os
 from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
 
 # === Config ===
-folder = '../run/test_1'
+folder = '../run/sweep_adv_01-06-25'
 thumb_size = (100, 100)
 cols = 10  # Number of images per row
 font_size = thumb_size[0] // 5
