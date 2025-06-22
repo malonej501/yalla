@@ -14,6 +14,7 @@ deactivate
 
 # compile the model
 nvcc -std=c++14 -arch=sm_61 ../examples/eggspot.cu -o exec
+# nvcc -std=c++14 -arch=sm_61 ../examples/volk.cu -o exec
 # nvcc -std=c++14 -arch=sm_61 ../examples/my_model_2D_volk_birth.cu -o exec
 
 # execute compiled model
