@@ -1,21 +1,22 @@
 # Produce phenotypes for a range of values of selected parameters. Gives an
 # overview of the model morphospace for select parameters.
 import os
-import pandas as pd
 import subprocess
+import pandas as pd
 from scipy.stats import qmc
 from pwriter import params_to_header
+from phenotype import Frame
 
 PARAMS = ["D_u", "k_prod", "k_deg", "u_death", "A_div"]
 RANGES = {
-    "D_u": (0.1, 1),  # min and max values for each parameter
-    "k_prod": (0.1, 1),
-    "k_deg": (0.1, 1),
-    "u_death": (0.01, 1),
-    "A_div": (0.001, 0.01)
+    "D_u": (0., 1),  # min and max values for each parameter
+    "k_prod": (0, 1),
+    "k_deg": (0, 1),
+    "u_death": (0, 1),
+    "A_div": (0, 0.01)
 }
 STEP = 10  # no. steps between min and max for each parameter
-N_SAMP = 100  # Number of LHS samples
+N_SAMP = 1000  # Number of LHS samples
 N_FRAMES = 1  # no. simulation frames to generate per sample
 RUN_ID = "test"
 DEFAULT = pd.read_csv("../params/default.csv")
@@ -52,19 +53,25 @@ def gen_lhs_data():
     return df
 
 
-def export_to_log(d, i):
-    """Saves the parameters to a log file."""
+def export_to_log(d, i, returncode, stats):
+    """Saves the sample index, return code, parameters and shape data to a log 
+    file."""
 
     log_path = f"../run/output/log_{RUN_ID}.csv"
     log_exists = os.path.exists(log_path)
     if i == 0 and log_exists:
         os.remove(log_path)
+    print(stats)
 
     with open(log_path, "a", encoding="utf-8") as f:
         if i == 0:
-            header = ["sample"] + d["param"].values.tolist()
+            header = (["sample"] + ["returncode"] +
+                      d["param"].values.tolist() +
+                      list(stats.keys()))
             f.write(",".join(header) + "\n")
-        values = [str(i)] + [str(v) for v in d["value"].values.tolist()]
+        values = [str(i), str(returncode),  # samp idx, return code and params
+                  *(str(v) for v in d["value"].values),
+                  *(str(v) for v in stats.values())]
         f.write(",".join(values) + "\n")
 
 
@@ -89,11 +96,19 @@ def main():
         subprocess.run(["nvcc", "-std=c++14", "-arch=sm_61",
                         "../examples/eggspot.cu", "-o", "exec"
                         ], check=True, cwd=run_dir)
-        subprocess.run(["./exec", str(0), str(i)], check=True, cwd=run_dir)
-        subprocess.run(["python3", "render.py", "output", "-s", str(i),
-                        "-f", str(2)],
-                       check=True, cwd=run_dir, env=env)
-        export_to_log(d, i)
+        result = subprocess.run(["./exec", str(0), str(i)], check=False,
+                                cwd=run_dir)
+        if result.returncode != 0:
+            print(f"Warning: ./exec failed for sample {i} with return code " +
+                  f"{result.returncode}")
+
+        # subprocess.run(["python3", "render.py", "output", "-s", str(i),
+        #                 "-f", str(2)],
+        #                check=True, cwd=run_dir, env=env)
+        fframe = Frame(run_id="output", wid=0, step=i, frame=N_FRAMES+1)
+        fframe.render()  # render and phenotype the last frame for each step
+        stats = fframe.phenotype()
+        export_to_log(d, i, result.returncode, stats)
 
 
 if __name__ == "__main__":
