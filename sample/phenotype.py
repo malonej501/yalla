@@ -2,7 +2,8 @@ import os
 import math
 import numpy as np
 import pandas as pd
-from vedo import Points, show, load
+from vedo import Plotter, Points, Text2D, Axes, show, load, settings
+from vedo import RendererFrame, Latex
 from sklearn.cluster import DBSCAN
 import alphashape
 import shapely
@@ -183,7 +184,7 @@ class Realfin():
 
         ax.set_title(f"{self.id}")
         if export:
-            plt.savefig(f"../data/{self.id}_regions.png")
+            plt.savefig(f"../data/{self.id}_regions.pdf", dpi=600)
         if display:
             plt.show()
         if fig is not None:
@@ -278,13 +279,18 @@ def analyse_realfins(fin_dir="../data"):
 
     plot_vars = ["n_regions", "mean_area",
                  "mean_roundness", "mesh_area", "av_dist"]
+    plot_titles = [
+        "No. Spots", "Mean Area", "Mean Roundness",
+        "Mesh Area", "Average Centroid Separation Distance"
+    ]
     fig, axs = plt.subplots(3, 2, figsize=(
         6, 6), layout="constrained", sharey=True)
     axs = axs.flat
     for i, plot_var in enumerate(plot_vars):
         axs[i].hist(stats[plot_var], bins)
-        axs[i].set_xlabel(plot_var)
+        axs[i].set_xlabel(plot_titles[i])
         axs[i].grid(alpha=0.3)
+    axs[-1].axis("off")  # hide the last empty subplot
     fig.supylabel("Frequency")
     fig.suptitle(fr"Real Fin Phenotype Statistics $N={len(stats)}$")
 
@@ -344,12 +350,99 @@ def compare_segmented_real(fin_dir="../data", export=False, mode=0):
     plt.show()
 
 
+def tissue_properties(run_id):
+    """Return properties of the tissue over the entire timecourse, not 
+    deducible individual vtk files e.g. maximum no. cell types"""
+    cell_types = []
+    vtks = load(f"../run/{run_id}/out_0_0_*.vtk")
+    for vtk in vtks:
+        cell_types_i = np.unique(vtk.pointdata["cell_type"])
+        if len(cell_types_i) > len(cell_types):
+            cell_types = cell_types_i  # get the maximum no. cell types
+
+    return cell_types
+
+
+def plot_sim_tseries_vedo(run_id, n_frames, axes=False):
+    """Plot a course time series of simulation frames."""
+    settings.immediate_rendering = False
+    cell_types = tissue_properties(run_id)
+    frames = np.linspace(0, 100, n_frames, dtype=int)
+    print(frames)
+    p = Plotter(N=n_frames, size=(900, 600), bg="white")
+
+    for i, fr in enumerate(frames):
+        frame = Frame(run_id=run_id, wid=0, step=0, frame=fr)
+        points = Points(frame.mesh).point_size(3)
+        points.cmap("viridis", "cell_type", vmin=cell_types.min(),
+                    vmax=cell_types.max())
+        text = Text2D(txt=f"t={fr*10}", pos="top-middle")
+        # text = Latex(formula=fr"t={fr*10}", pos=(0, 2, 0), s=2)
+        p.at(i).add(points, text).add_renderer_frame()
+        if axes:
+            axes = Axes(xtitle="x", ytitle="y", text_scale=2,
+                        xrange=(-3.75, 3.75), yrange=(-1.25, 1.25))
+            p.at(i).add(axes)
+
+    p.show()
+    p.screenshot(f"{os.path.basename(run_id)}_tseries.png")
+    p.interactive().close()
+
+
+def plot_sim_tseries_mtpl(run_id, n_frames):
+    """Plot a course time series of simulation frames using matplotlib."""
+    cell_types = tissue_properties(run_id)
+    frames = np.linspace(0, 100, n_frames, dtype=int)
+    print(frames)
+    ctypes = {1: "Spot-migratory", 2: "Non-spot", 3: "Spot-static"}
+
+    fig, axs = plt.subplots(2, 3, figsize=(8, 4),
+                            layout="constrained")
+    axs = axs.flatten()
+
+    for i, fr in enumerate(frames):
+        frame = Frame(run_id=run_id, wid=0, step=0, frame=fr)
+        fr_dat = {"x": frame.mesh.vertices[:, 0],
+                  "y": frame.mesh.vertices[:, 1],
+                  "type": frame.mesh.pointdata["cell_type"]}
+        fr_dat = pd.DataFrame(fr_dat)
+        # sc = axs[i].scatter(fr_dat["x"], fr_dat["y"], c=fr_dat["type"],
+        #                     s=1, cmap="viridis",
+        #                     vmin=cell_types.min(), vmax=cell_types.max())
+        for ctype in fr_dat["type"].unique():
+            mask = fr_dat["type"] == ctype
+            axs[i].scatter(fr_dat["x"][mask], fr_dat["y"][mask], s=1,
+                           label=ctypes[ctype], c=plt.cm.viridis(
+                               (ctype - cell_types.min()) /
+                               (cell_types.max() - cell_types.min())))
+        axs[i].set_aspect("equal")
+        axs[i].set_title(fr"$t={fr*10}$")
+        axs[i].set_xticks([])
+        axs[i].set_yticks([])
+        axs[i].axis("off")
+
+    # fig.colorbar(sc, ax=axs, label="Cell Type", orientation="vertical")
+    leg = fig.legend(*axs[3].get_legend_handles_labels(), loc="outside lower center",
+                     title="Cell Type", ncol=3)
+    for handle in leg.legend_handles:
+        handle.set_sizes([30])
+        handle.set_edgecolor("black")
+        handle.set_linewidth(0.5)
+    # print(axs[4].get_legend_handles_labels())
+
+    plt.savefig(f"{os.path.basename(run_id)}_tseries_mtpl.pdf")
+    plt.show()
+
+
 if __name__ == "__main__":
     # analyse_realfins()
+    # plot_sim_tseries_vedo("../run/saves/li_adv_new_lenscales_01-06-25", 6)
+    plot_sim_tseries_mtpl("../run/saves/li_adv_new_lenscales_01-06-25", 6)
     # plot_segmented_fins()
-    compare_segmented_real(export=True, mode=0)
+    # compare_segmented_real(export=True, mode=1)
     # Realfin(path="../data/1_13-10-22_Simple Segmentation.h5").mesh(True)
-
+    # Realfin(path="../data/Taeniolethrinops_laticeps_'Tsano_Rock'_Simple Segmentation.h5").mesh(True)
+    # Realfin(path="../data/Mchenga_cyclicos_'Msuli'_Simple Segmentation.h5").mesh(True)
     # print(stats)
     # plt.imshow(fin.arr, cmap="gray")
     # plt.show()
