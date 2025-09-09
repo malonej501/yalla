@@ -1,4 +1,5 @@
 .vs/
+.vscode/
 debug/
 output/
 18_20_frames/
@@ -13,6 +14,9 @@ sample/logging.cpp
 backups
 *.vtk
 *.png
+*.jpg
+*.jpeg
+*.svg
 *.pdf
 *.h
 *.csv
