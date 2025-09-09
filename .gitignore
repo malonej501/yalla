@@ -8,6 +8,7 @@ venv/
 run/exec
 run/exec.sh
 run/saves/
+sample/logging.cpp
 *.mp4
 backups
 *.vtk
