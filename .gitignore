@@ -1,4 +1,5 @@
 .vs/
+.vscode/
 debug/
 output/
 18_20_frames/
@@ -13,7 +14,14 @@ sample/logging.cpp
 backups
 *.vtk
 *.png
+*.jpg
+*.jpeg
+*.svg
 *.pdf
 *.h
 *.csv
 *.pyc
+<<<<<<< HEAD
+=======
+*.h5
+>>>>>>> 0416c672724565d1df8c8a083f645bae5cd8bb61

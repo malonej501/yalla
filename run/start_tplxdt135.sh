@@ -14,10 +14,13 @@ deactivate
 
 # compile the model
 nvcc -std=c++14 -arch=sm_61 ../examples/eggspot.cu -o exec
+# nvcc -std=c++14 -arch=sm_61 ../examples/volk.cu -o exec
+# nvcc -std=c++14 -arch=sm_61 ../examples/my_model_2D_volk_birth.cu -o exec
 
 # execute compiled model
 ./exec
 
 echo "Job $job_id has completed."
 
+cp ../params/default.csv output/default.csv # copy default parameters into output
 cp ../examples/eggspot.cu output/eggspot.cu # copy source code into output directory

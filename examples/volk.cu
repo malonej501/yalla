@@ -10,7 +10,6 @@
 #include <thrust/execution_policy.h>
 #include <thrust/remove.h>
 
-#include <cmath>
 #include <iterator>
 
 #include "../include/dtypes.cuh"
@@ -37,92 +36,123 @@ __device__ bool* d_in_ray;    // whether a cell is in a ray
 __device__ Pm d_pm;           // simulation parameters (host h_pm)
 __device__ float3 d_tis_min;  // min coordinate of tissue mesh
 __device__ float3 d_tis_max;  // max coordinate of tissue mesh
+__device__ int* d_ngs_A;      // no. spot cells in neighbourhood
+__device__ int* d_ngs_B;      // no. non-spot cells in neighbourhood
+__device__ int* d_ngs_Ac;     // overcrowded neighbourhood
+__device__ int* d_ngs_Bc;     // overcrowded neighbourhood
+__device__ int* d_ngs_Ad;     // donut neighbourhood
+__device__ int* d_ngs_Bd;     // donut neighbourhood
 
 template<typename Pt>
 __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 {
     Pt dF{0};
 
-<<<<<<< HEAD
-    if (dist > d_pm.r_max)  // set cutoff for computing interaction
-        return dF;          // includes forces and diffusion
-=======
+    // counting cells in different nbhds
+    if ((dist > 0.318) and (dist < 0.318 + 0.025)) {  // donut
+        if (d_cell_type[j] == 1)
+            d_ngs_Ad[i] += 1;
+        else
+            d_ngs_Bd[i] += 1;
+    }
+    if (dist < 0.082) {  // overcrowding region
+        if (d_cell_type[j] == 1)
+            d_ngs_Ac[i] += 1;
+        else
+            d_ngs_Bc[i] += 1;
+    }
+    if (dist < 0.075) {  // inner disc for cell proliferation conditions
+        if (d_cell_type[j] == 1)
+            d_ngs_A[i] += 1;
+        else
+            d_ngs_B[i] += 1;
+    }
+
     if (dist > d_pm.r_max)  // dist = norm3df(r.x, r.y, r.z) solvers line 308
-        return dF;          // set cutoff for computing interaction forces
->>>>>>> 0416c672724565d1df8c8a083f645bae5cd8bb61
+        return dF;          // cutoff for chemical and mechanical interaction
+
+    if (d_cell_type[i] == -1 || d_cell_type[j] == -1 || d_cell_type[i] == -2 ||
+        d_cell_type[j] == -2) {
+        return dF;  // cells in staging area have no interactions
+    }
 
     if (i == j) {      // if the cell is interacting with itself
         dF += d_W[i];  // add stochasticity from the weiner process to the
                        // attributes of the cells
 
         // Chemical production and degredation
+        if (d_pm.chem_switch) {
+            if (d_pm.cmode == 0) {  // chemical production and degredation
+                dF.u = d_pm.k_prod * (1.0 - Xi.u) *
+                       (d_cell_type[i] == 1 ||
+                           d_cell_type[i] == 3);  // cell type 1/3 produce u
+                dF.v =
+                    d_pm.k_prod * (1.0 - Xi.v) *
+                    (d_cell_type[i] == 2);  // cell type 2 produces chemical v
+                // dF.u = d_pm.k_prod * ((d_cell_type[i] == 1 || d_cell_type[i]
+                // == 3) &
+                //                          Xi.u < 1);  // stop making u when it
+                //                                      //   reaches 1
+                // dF.v = d_pm.k_prod *
+                //        ((d_cell_type[i] == 2) & Xi.v < 1);  // stop making v
+                //        when
+                // it reaches 1
+                dF.u -= d_pm.k_deg * (Xi.u);
+                dF.v -= d_pm.k_deg * (Xi.v);
+            }
 
-        if (d_pm.cmode == 0) {  // chemical production and degredation
-            dF.u = d_pm.k_prod * (1.0 - Xi.u) *
-                   (d_cell_type[i] == 1 ||
-                       d_cell_type[i] == 3);  // cell type 1/3 produce u
-            dF.v = d_pm.k_prod * (1.0 - Xi.v) *
-                   (d_cell_type[i] == 2);  // cell type 2 produces chemical v
-            // dF.u = d_pm.k_prod * ((d_cell_type[i] == 1 || d_cell_type[i] ==
-            // 3) &
-            //                          Xi.u < 1);  // stop making u when it
-            //                                      //   reaches 1
-            // dF.v = d_pm.k_prod *
-            //        ((d_cell_type[i] == 2) & Xi.v < 1);  // stop making v when
-            // it reaches 1
-            dF.u -= d_pm.k_deg * (Xi.u);
-            dF.v -= d_pm.k_deg * (Xi.v);
-        }
-
-        if (d_pm.cmode == 1) {
-            // see Schnackenberg 1979 eq. 41
-            float a = ((Xi.x + 3) * 0.1);
-            float b = ((Xi.y + 1) * 0.2);
-            // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + d_pm.a_u;
-            // dF.v = -(Xi.u * Xi.u * Xi.v) + d_pm.b_v;
-            dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + a;
-            dF.v = b - (Xi.u * Xi.u * Xi.v);
-            // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + (Xi.x * 0.1);
-            // dF.v = -(Xi.u * Xi.u * Xi.v) + (Xi.y * 0.1);
-        }
-        if (d_pm.cmode == 2) {
-            // Gray Scott model
-            float a = 0.3;
-            float b = 0.003;
-            float R = 0.1;
-            // float a = ((Xi.x + 3) * 0.1);
-            // float b = ((Xi.y + 1) * 0.01);
-            // float R = ((Xi.x + 3) * 0.1);
-            dF.u = R * ((Xi.u * Xi.u * Xi.v) - ((a + b) * Xi.u));
-            dF.v = R * (-(Xi.u * Xi.u * Xi.v) + (a * (1 - Xi.v)));
-        }
-        if (d_pm.cmode == 3) {
-            // Gierer Meinhardt model
-            // float a = 0.8;
-            // float b = 1;
-            // float c = 6;
-            // float a = ((Xi.x + 3) * 0.1);
-            // float b = ((Xi.y + 1) * 0.1);
-            // float c = ((Xi.y + 1) * 0.1);
-            // dF.u = (a + ((Xi.u * Xi.u) / Xi.v) - (b * Xi.u));
-            // dF.v = (Xi.u * Xi.u) - (c * Xi.v);
-            const auto lambda = 1;
-            const auto f_v = 0.1;
-            const auto f_u = 10.0;
-            const auto g_u = 5.0;
-            const auto m_u = 0.02;
-            const auto m_v = 0.05;
-            const auto s_u = 0.005;
-            dF.u = lambda *
-                   ((f_u * Xi.u * Xi.u) / (1 + f_v * Xi.v) - m_u * Xi.u + s_u);
-            dF.v = lambda * (g_u * Xi.u * Xi.u - m_v * Xi.v);
+            if (d_pm.cmode == 1) {
+                // see Schnackenberg 1979 eq. 41
+                float a = ((Xi.x + 3) * 0.1);
+                float b = ((Xi.y + 1) * 0.2);
+                // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + d_pm.a_u;
+                // dF.v = -(Xi.u * Xi.u * Xi.v) + d_pm.b_v;
+                dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + a;
+                dF.v = b - (Xi.u * Xi.u * Xi.v);
+                // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + (Xi.x * 0.1);
+                // dF.v = -(Xi.u * Xi.u * Xi.v) + (Xi.y * 0.1);
+            }
+            if (d_pm.cmode == 2) {
+                // Gray Scott model
+                float a = 0.3;
+                float b = 0.003;
+                float R = 0.1;
+                // float a = ((Xi.x + 3) * 0.1);
+                // float b = ((Xi.y + 1) * 0.01);
+                // float R = ((Xi.x + 3) * 0.1);
+                dF.u = R * ((Xi.u * Xi.u * Xi.v) - ((a + b) * Xi.u));
+                dF.v = R * (-(Xi.u * Xi.u * Xi.v) + (a * (1 - Xi.v)));
+            }
+            if (d_pm.cmode == 3) {
+                // Gierer Meinhardt model
+                // float a = 0.8;
+                // float b = 1;
+                // float c = 6;
+                // float a = ((Xi.x + 3) * 0.1);
+                // float b = ((Xi.y + 1) * 0.1);
+                // float c = ((Xi.y + 1) * 0.1);
+                // dF.u = (a + ((Xi.u * Xi.u) / Xi.v) - (b * Xi.u));
+                // dF.v = (Xi.u * Xi.u) - (c * Xi.v);
+                const auto lambda = 1;
+                const auto f_v = 0.1;
+                const auto f_u = 10.0;
+                const auto g_u = 5.0;
+                const auto m_u = 0.02;
+                const auto m_v = 0.05;
+                const auto s_u = 0.005;
+                dF.u = lambda * ((f_u * Xi.u * Xi.u) / (1 + f_v * Xi.v) -
+                                    m_u * Xi.u + s_u);
+                dF.v = lambda * (g_u * Xi.u * Xi.u - m_v * Xi.v);
+            }
         }
         return dF;
     }
 
     // Diffusion
-    dF.u = -d_pm.D_u * r.u;  // r = Xi - Xj solvers.cuh line 448
-    dF.v = -d_pm.D_v * r.v;
+    if (d_pm.chem_switch) {
+        dF.u = -d_pm.D_u * r.u;  // r = Xi - Xj solvers.cuh line 448
+        dF.v = -d_pm.D_v * r.v;
+    }
     // dF.u = -((Xi.x + 3) * 0.01) * r.u;
     // dF.v = -((Xi.y + 1.5) * 0.01) * r.v;
     // dF.u = -0.1 * r.u;
@@ -133,7 +163,6 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // dF.v = -40 * r.v;
     // dF.u = -0.01 * r.u;
     // dF.v = -0.05 * r.v;
-
 
     // Mechanical forces
 
@@ -147,10 +176,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     float rep = d_pm.rdd;
 
     if (d_pm.diff_adh_rep) {
-        if ((d_cell_type[i] == 1 and d_cell_type[j] == 1) or
-            (d_cell_type[i] == 3 and d_cell_type[j] == 3) or
-            (d_cell_type[i] == 1 and d_cell_type[j] == 3) or
-            (d_cell_type[i] == 3 and d_cell_type[j] == 1)) {
+        if (d_cell_type[i] == 2 and d_cell_type[j] == 1) {
             Adh = d_pm.Aii;  // A-A interact with different adh and rep vals
             adh = d_pm.aii;
             Rep = d_pm.Rii;
@@ -199,65 +225,117 @@ __global__ void generate_noise(int n, curandState* d_state)
     d_W[i].v = 0;
 }
 
+
+__device__ void overwrite_cell(int i, Cell* d_X, int* d_n_cells)
+{
+    // Decrement total no. cells, overwrite cell i with last cell in d_X, stop
+    // if only one cell left
+    if (d_cell_type[i] == 1 || d_cell_type[i] == 2) {  // check no 1 or 2
+        printf("ERROR: Tried to overwrite type 1/2 cell at i=%d\n", i);
+    }
+    int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
+    if (i < n) {
+        d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
+        d_W[i] = d_W[n - 1];
+        d_cell_type[i] = d_cell_type[n - 1];
+        d_mech_str[i] = d_mech_str[n - 1];
+        // d_old_v[i] = d_old_v[n - 1];
+        d_in_ray[i] = d_in_ray[n - 1];
+        d_ngs_A[i] = d_ngs_A[n - 1];
+        d_ngs_B[i] = d_ngs_B[n - 1];
+        d_ngs_Ac[i] = d_ngs_Ac[n - 1];
+        d_ngs_Bc[i] = d_ngs_Bc[n - 1];
+        d_ngs_Ad[i] = d_ngs_Ad[n - 1];
+        d_ngs_Bd[i] = d_ngs_Bd[n - 1];
+    }
+}
+
+__global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X,
+    float3* d_old_v, int* d_n_cells)
+{
+    int i = blockIdx.x * blockDim.x +
+            threadIdx.x;  // get the index of the current cell
+    if (i >= n_cells)
+        return;  // return nothing if the index is greater than n_cells
+    if (n_cells >= (d_pm.n_max * 0.9))
+        return;  // return nothing if the no. cells starts to approach the max
+
+    if (i < d_pm.n_new_cells) {  // threads with i < n_new_cell create new cell
+        int n = atomicAdd(d_n_cells, 1);
+        d_X[n].x = d_tis_min.x +
+                   (d_tis_max.x - d_tis_min.x) * curand_uniform(&d_state[i]);
+        d_X[n].y = d_tis_min.y +
+                   (d_tis_max.y - d_tis_min.y) * curand_uniform(&d_state[i]);
+        d_X[n].z = 0;
+
+        d_old_v[n] = d_old_v[i];
+        // d_cell_type[n] = -1;
+        if (i < (d_pm.n_new_cells / 2)) {  // stage 1/2 cells of each type
+            d_cell_type[n] = -1;
+        } else {
+            d_cell_type[n] = -2;
+        }
+    }
+}
+
+
 __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
     float3* d_old_v, int* d_n_cells)
 {
+    // change cells from staging to active types if conditions are met
     int i = blockIdx.x * blockDim.x + threadIdx.x;  // index of current cell
     if (i >= n_cells) return;                       // stop if i >= n_cells
     if (n_cells >= (d_pm.n_max * 0.9)) return;      // no div above n_max
-    if (d_mech_str[i] > d_pm.mech_thresh) return;   // no div above mech_thresh
+    // if (d_mech_str[i] > d_pm.mech_thresh) return;   // no div above
 
-    if (d_cell_type[i] == 1) {
-        // if (d_X[i].u > 0.85) return;
-        if (curand_uniform(&d_state[i]) > (d_pm.A_div * d_pm.dt)) return;
+    if (d_cell_type[i] == 1 || d_cell_type[i] == 2) return;
+    if (d_cell_type[i] == -1) {
+        if (d_ngs_A[i] > d_pm.alpha * d_ngs_B[i] &&   // short range condition
+            d_ngs_Bd[i] > d_pm.beta * d_ngs_Ad[i] &&  // long range condition
+            d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.eta      // overcrowding condition
+        ) {
+            d_cell_type[i] = 1;
+            return;
+        }
     }
-
-    if (d_cell_type[i] == 2) {
-        if (curand_uniform(&d_state[i]) > (d_pm.B_div * d_pm.dt)) return;
+    if (d_cell_type[i] == -2) {
+        if (d_ngs_B[i] > d_pm.phi * d_ngs_A[i] &&    // short range condition
+            d_ngs_Ad[i] > d_pm.psi * d_ngs_Bd[i] &&  // long range condition
+            d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.kappa   // overcrowding condition
+        ) {
+            d_cell_type[i] = 2;
+            return;
+        }
     }
+    // printf("Overwriting cell %d\n", i);
+    overwrite_cell(i, d_X, d_n_cells);  // overwrite cell if not proliferating
+}
 
-    if (d_cell_type[i] == 3) {  // type 3 cells same as type 1
-        // if (d_X[i].v < d_pm.vthresh) return;  // divide if in v spot
-        if (curand_uniform(&d_state[i]) > (d_pm.A_div * d_pm.dt)) return;
+
+__global__ void death(
+    int n_cells, curandState* d_state, Cell* d_X, int* d_n_cells)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n_cells) return;
+    float r = curand_uniform(&d_state[i]);
+    if (d_cell_type[i] == -1 || d_cell_type[i] == -2) return;  // don't die
+
+    // short-range competition spot cells
+    // if spot and non-spot in nbhd exceed spot, die
+    if (d_cell_type[i] == 1 and d_ngs_B[i] > d_ngs_A[i]) {
+        overwrite_cell(i, d_X, d_n_cells);
     }
-
-    int n = atomicAdd(d_n_cells, 1);
-
-    float theta = curand_uniform(&d_state[i]) * 2 * M_PI;  // child pos -2D only
-    d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
-    d_X[n].y = d_X[i].y + (d_pm.div_dist * sinf(theta));
-    d_X[n].z = 0;
-
-    d_old_v[n] = d_old_v[i];
-
-    d_mech_str[n] = 0.0;
-
-
-    // set child cell types
-    if (d_cell_type[i] == 2) {  // type 2 cells (non-spot) can divide into type
-                                // 1 cells when d_pmode is set correctly
-        if (d_pm.pmode == 0) d_cell_type[n] = 2;
-        if (d_pm.pmode == 1)
-            d_cell_type[n] =
-                (curand_uniform(&d_state[i]) < d_pm.r_A_birth)
-                    ? 1
-                    : 2;  // sometimes cell type 2 produces cell type 1 random
-                          // birth of cell type 1 is inhibited by chemical u
-        if (d_pm.pmode == 2)
-            d_cell_type[n] = (curand_uniform(&d_state[i]) < d_pm.r_A_birth &&
-                                 d_X[i].u < d_pm.uthresh)
-                                 ? 1
-                                 : 2;
+    // short-range competition non-spot cells
+    // if non-spot and no. spot in nbhd  exceeds no. non-spot, die
+    if (d_cell_type[i] == 2 and d_ngs_A[i] > d_ngs_B[i]) {
+        overwrite_cell(i, d_X, d_n_cells);
     }
-    if (d_cell_type[i] == 1) d_cell_type[n] = 1;
-    if (d_cell_type[i] == 3) d_cell_type[n] = 3;
-
-    // half the amount of each chemical upon cell division in the parent cell
-    d_X[i].u *= 0.5;
-    d_X[i].v *= 0.5;
-    // the child inherits the other half of the amount of the chemical
-    d_X[n].u = d_X[i].u;
-    d_X[n].v = d_X[i].v;
+    // long range spot-cell death condition
+    // if spot and no. spot in donut exceeds no. non-spot, die
+    if (d_cell_type[i] == 1 and d_ngs_Ad[i] > d_pm.xi * d_ngs_Bd[i] and
+        (r > d_pm.q_death)) {
+        overwrite_cell(i, d_X, d_n_cells);
+    }
 }
 
 __global__ void cell_switching(int n_cells, Cell* d_X)
@@ -267,56 +345,33 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
 
     // spot cells become static when u is high
     // if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 3;
-    if (d_pm.tmode == 5) {  // switching for non-advecting/advecting spot
-                            // cells
-        float top_y = d_tis_max.y - (0.4 * (d_tis_max.y - d_tis_min.y));
-        float bot_y = d_tis_min.y + (0.4 * (d_tis_max.y - d_tis_min.y));
-        // printf("top_y: %f, bot_y: %f\n", top_y, bot_y);
-        if (d_cell_type[i] == 1 && d_X[i].u > 0.4 && d_X[i].y < top_y &&
-            d_X[i].y > bot_y)
-            d_cell_type[i] = 3;  // don't switch if still in top 10% of
-                                 // tissue
-    }
+    // if (d_pm.tmode == 5) {  // switching for non-advecting/advecting spot
+    // cells
+    //     float top_y = d_tis_max.y - (0.4 * (d_tis_max.y - d_tis_min.y));
+    //     float bot_y = d_tis_min.y + (0.4 * (d_tis_max.y - d_tis_min.y));
+    //     if (d_cell_type[i] == 1 && d_X[i].u > 0.5 && d_X[i].y < top_y &&
+    //         d_X[i].y > bot_y)
+    //         d_cell_type[i] = 3;  // don't switch if still in top 10% of
+    //         tissue
+    // }
     // if (d_cell_type[i] == 2 && d_X[i].u > 180) {
     //     d_cell_type[i] = 1;  // switch to spot cell if u high
     // }
     // if (d_cell_type[i] == 1 && d_X[i].u < 180) {
     //     d_cell_type[i] = 2;  // switch to non-spot cell if u low
     // }
-    // float top_y = d_tis_max.y - (0.2 * (d_tis_max.y - d_tis_min.y));
-    // float bot_y = d_tis_min.y + (0.2 * (d_tis_max.y - d_tis_min.y));
-    // if (d_X[i].y < top_y && d_X[i].y > bot_y) {
-    //     if (d_cell_type[i] == 1 && d_X[i].v > d_pm.vthresh) {
-    //         d_cell_type[i] = 3;  // switch to spot cell if u high
-    //     }
-    //     if (d_cell_type[i] == 3 && d_X[i].v < d_pm.vthresh) {
-    //         d_cell_type[i] = 2;  // switch to non-spot cell if u low
-    //     }
-    // }
-}
-
-__global__ void death(
-    int n_cells, Cell* d_X, int* d_n_cells, curandState* d_state)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n_cells) return;
-    float r = curand_uniform(&d_state[i]);
-
-    // if (d_X[i].u > 0.4 && d_X[i].u < 0.43 &&
-    if (d_X[i].u > d_pm.u_death &&
-        (d_cell_type[i] == 1 ||
-            d_cell_type[i] == 3)) {       // die if type 1/3 and u high
-        int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
-        // overwrite cell i with last cell in d_X, stop if only one cell left
-        if (i < n) {
-            d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
-            d_W[i] = d_W[n - 1];
-            d_cell_type[i] = d_cell_type[n - 1];
-            d_mech_str[i] = d_mech_str[n - 1];
-            d_in_ray[i] = d_in_ray[n - 1];
+    float top_y = d_tis_max.y - (0.2 * (d_tis_max.y - d_tis_min.y));
+    float bot_y = d_tis_min.y + (0.2 * (d_tis_max.y - d_tis_min.y));
+    if (d_X[i].y < top_y && d_X[i].y > bot_y) {
+        if (d_cell_type[i] == 1 && d_X[i].v > d_pm.vthresh) {
+            d_cell_type[i] = 3;  // switch to spot cell if u high
+        }
+        if (d_cell_type[i] == 3 && d_X[i].v < d_pm.vthresh) {
+            d_cell_type[i] = 2;  // switch to non-spot cell if u low
         }
     }
 }
+
 
 void init_rays(Mesh& tis, float rays[100][2])  // maximum of 100 rays
 {
@@ -331,23 +386,17 @@ void init_rays(Mesh& tis, float rays[100][2])  // maximum of 100 rays
         p_min = tis.get_minimum().y;
         p_max = tis.get_maximum().y;
     }
+    float step;
+    step = (p_max - p_min) / (h_pm.n_rays - 1);
+    if (h_pm.n_rays < 2)
+        step = (p_max - p_min) / 2;  // if only one ray, set to middle
 
-    if (h_pm.n_rays < 2) {  // if only one ray, set to middle
-        float center = (p_max + p_min) / 2;
-        float p1 = center - (h_pm.s_ray * (p_max - p_min) / 2);
-        float p2 = center + (h_pm.s_ray * (p_max - p_min) / 2);
-        rays[0][0] = p1;  // start of ray either x or y line
-        rays[0][1] = p2;  // end of ray either x or y line
-    } else {
-        for (int i = 0; i < h_pm.n_rays; i++) {
-            float step = (p_max - p_min) / (h_pm.n_rays - 1);
-            float p1 = p_min + i * step;  // start of ray either x or y line
-            float p2 =
-                p1 + (h_pm.s_ray * (p_max - p_min));  // scale by tissue size
-            // x_pairs.push_back({x1, x2});
-            rays[i][0] = p1;
-            rays[i][1] = p2;
-        }
+    for (int i = 0; i < h_pm.n_rays; i++) {
+        float p1 = p_min + i * step;  // start of ray either x or y line
+        float p2 = p1 + (h_pm.s_ray * (p_max - p_min));  // scale by tissue size
+        // x_pairs.push_back({x1, x2});
+        rays[i][0] = p1;
+        rays[i][1] = p2;
     }
 }
 
@@ -387,24 +436,26 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
 
 int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 {
-<<<<<<< HEAD
-    std::cout << std::fixed << std::setprecision(6);  // precision for floats
-=======
-    std::cout << std::fixed << std::setprecision(6);  // float precision
->>>>>>> 0416c672724565d1df8c8a083f645bae5cd8bb61
+    std::cout << std::fixed
+              << std::setprecision(6);  // set precision for floats
+    // h_pm.dt = 0.05 * 0.6 * 0.6 / h_pm.D_v;
 
     // Prepare Random Variable for the Implementation of the Wiener Process
-    curandState* d_state;  // define the random number generator on the GPU
-    cudaMalloc(&d_state, h_pm.n_max * sizeof(curandState));  // GPU mem alloc
-    auto seed = time(NULL);  // random number seed from machine time
-    setup_rand_states<<<(h_pm.n_max + 32 - 1) / 32, 32>>>(
-        h_pm.n_max, seed, d_state);  // configuring the random number generator
-                                     // on the GPU (provided by utils.cuh)
+    curandState* d_state;  // define the random number generator on the GPu
+    cudaMalloc(&d_state,
+        h_pm.n_max * sizeof(curandState));  // allocate GPU memory according
+                                            // to no. cells
+    auto seed =
+        time(NULL);  // random number seed - coupled to the time on your machine
+    setup_rand_states<<<(h_pm.n_max + 32 - 1) / 32, 32>>>(h_pm.n_max, seed,
+        d_state);  // configuring the random number generator
+                   // on the GPU (provided by utils.cuh)
 
     /* create host variables*/
     // you first create an instance of the Property class on the host, then
     // you connect it to the global variable defined on the device with
-    Property<Cell> W{h_pm.n_max, "wiener_process"};  // weiner process
+    Property<Cell> W{
+        h_pm.n_max, "wiener_process"};  // weiner process random number
     cudaMemcpyToSymbol(d_W, &W.d_prop, sizeof(d_W));
     Property<float> mech_str{h_pm.n_max, "mech_str"};
     cudaMemcpyToSymbol(d_mech_str, &mech_str.d_prop, sizeof(d_mech_str));
@@ -413,35 +464,42 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     Property<bool> in_ray{h_pm.n_max, "in_ray"};  // whether cell in ray or not
     cudaMemcpyToSymbol(d_in_ray, &in_ray.d_prop, sizeof(d_in_ray));
     cudaMemcpyToSymbol(d_pm, &h_pm, sizeof(Pm));  // copy host params
+    Property<int> ngs_A{h_pm.n_max, "ngs_A"};
+    cudaMemcpyToSymbol(d_ngs_A, &ngs_A.d_prop, sizeof(d_ngs_A));
+    Property<int> ngs_B{h_pm.n_max, "ngs_B"};
+    cudaMemcpyToSymbol(d_ngs_B, &ngs_B.d_prop, sizeof(d_ngs_B));
+    Property<int> ngs_Ac{h_pm.n_max, "ngs_Ac"};
+    cudaMemcpyToSymbol(d_ngs_Ac, &ngs_Ac.d_prop, sizeof(d_ngs_Ac));
+    Property<int> ngs_Bc{h_pm.n_max, "ngs_Bc"};
+    cudaMemcpyToSymbol(d_ngs_Bc, &ngs_Bc.d_prop, sizeof(d_ngs_Bc));
+    Property<int> ngs_Ad{h_pm.n_max, "ngs_Ad"};
+    cudaMemcpyToSymbol(d_ngs_Ad, &ngs_Ad.d_prop, sizeof(d_ngs_Ad));
+    Property<int> ngs_Bd{h_pm.n_max, "ngs_Bd"};
+    cudaMemcpyToSymbol(d_ngs_Bd, &ngs_Bd.d_prop, sizeof(d_ngs_Bd));
 
-<<<<<<< HEAD
     // Initial conditions
-    Solution<Cell, Gabriel_solver> cells{
-        h_pm.n_max, h_pm.g_size, h_pm.r_max};  // initialise solver
-    // n_max, grid size, cube size respectively
-    *cells.h_n = h_pm.n_0;
-=======
-    // Solver
     // Solution<Cell, Gabriel_solver> cells{h_pm.n_max, h_pm.g_size,
-    // h_pm.r_max}; args are n_max, grid_size, cube_size, gabriel_coefficient
-    Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
+    // h_pm.r_max};
+    Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max * 5};
+    // args are n_max, grid_size, cube_size
     // *cells.h_n = h_pm.n_0;
->>>>>>> 0416c672724565d1df8c8a083f645bae5cd8bb61
 
     float rays[h_pm.n_rays][2];  // initialise rays with default values
     for (int i = 0; i < h_pm.n_rays; i++) {
         rays[i][0] = 0;
         rays[i][1] = 0;
     }
+    // Allocate memory for rays on the device
     float (*d_rays)[2];
-    cudaMalloc(&d_rays, h_pm.n_rays * 2 * sizeof(float));  // GPU mem alloc
+    cudaMalloc(&d_rays, h_pm.n_rays * 2 * sizeof(float));
 
     if (h_pm.tmode == 0) {
         random_disk_z(h_pm.init_dist, cells);
         for (int i = 0; i < h_pm.n_0; i++) {
             cell_type.h_prop[i] = (std::rand() % 100 < h_pm.A_init)
-                                      ? 1   // randomly assign a proportion of
-                                      : 2;  // initial cells with each type
+                                      ? 1
+                                      : 2;  // randomly assign a proportion of
+                                            // initial cells with each type
         }
     }
     if (h_pm.tmode == 1) {
@@ -460,13 +518,14 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             std::round(std::sqrt(h_pm.n_0) / 10) * 10, cells);
         for (int i = 0; i < h_pm.n_0; i++) {
             cell_type.h_prop[i] = (i < h_pm.n_0 - sp_size)
-                                      ? 2   // set cell type to 1 for spot
-                                      : 1;  // cells, and 2 for all others
+                                      ? 2
+                                      : 1;  // set cell type to 1 for spot
+                                            // cells, and 2 for all others
         }
     }
     if (h_pm.tmode ==
         3) {  // cut the tissue mesh out of a random cloud of cells
-        Mesh tis{"../inits/shape2_mesh_3D.vtk"};
+        Mesh tis{"../inits/shape1_mesh_3D.vtk"};
         tis.rescale(h_pm.tis_s);  // expand the mesh to fit to the boundaries
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
@@ -480,12 +539,13 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         *cells.h_n = std::distance(cells.h_X, new_n);
         for (int i = 0; i < h_pm.n_0; i++) {  // set cell types
             cell_type.h_prop[i] = (std::rand() % 100 < h_pm.A_init)
-                                      ? 1   // set cell type to 1 for spot
-                                      : 2;  // cells, and 2 for all others
+                                      ? 1
+                                      : 2;  // set cell type to 1 for spot
+                                            // cells, and 2 for all others
         }
     }
     if (h_pm.tmode == 4) {  // cut the fin mesh out of a random cloud of cells
-        Mesh tis{"../inits/shape2_mesh_3D.vtk"};
+        Mesh tis{"../inits/shape1_mesh_3D.vtk"};
         tis.rescale(h_pm.tis_s);
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
@@ -514,7 +574,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         }
     }
     if (h_pm.tmode == 5) {  // fin with spot aggregation at top
-        Mesh tis{"../inits/shape2_mesh_3D.vtk"};
+        Mesh tis{"../inits/shape1_mesh_3D.vtk"};
         tis.rescale(h_pm.tis_s);
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
@@ -545,10 +605,10 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
 
     for (int i = 0; i < h_pm.n_0; i++) {  // initialise chemical amounts
-        cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
-        cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
-        // cells.h_X[i].u = 0;
-        // cells.h_X[i].v = 0;
+        // cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
+        // cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
+        cells.h_X[i].u = 0;
+        cells.h_X[i].v = 0;
         // Mesh tis{"../inits/shape1_mesh_3D.vtk"};
         // tis.rescale(h_pm.tis_s);
         // auto y_len = tis.get_maximum().y - tis.get_minimum().y;
@@ -562,6 +622,12 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     for (int i = 0; i < h_pm.n_max; i++) {  // initialise with zeroes
         mech_str.h_prop[i] = 0;
         in_ray.h_prop[i] = false;
+        ngs_A.h_prop[i] = 0;
+        ngs_B.h_prop[i] = 0;
+        ngs_Ac.h_prop[i] = 0;
+        ngs_Bc.h_prop[i] = 0;
+        ngs_Ad.h_prop[i] = 0;
+        ngs_Bd.h_prop[i] = 0;
     }
 
     // Copy the ray data to the device
@@ -570,8 +636,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
     int time_step;  // declare  outside main loop for access in gen_func
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
-                                Cell* d_dX) {  // then set the mechanical forces
-                                               // to zero on the device
+                                Cell* d_dX) {  // then set the mechanical
+                                               // forces to zero on the device
         // Set these properties to zero after every timestep so they
         // don't accumulate Called every timesetep, allows you to add
         // custom forces at every timestep e.g. advection
@@ -579,6 +645,18 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             mech_str.d_prop + cells.get_d_n(), 0.0);
         thrust::fill(thrust::device, in_ray.d_prop,
             in_ray.d_prop + cells.get_d_n(), false);
+        thrust::fill(
+            thrust::device, ngs_A.d_prop, ngs_A.d_prop + cells.get_d_n(), 0);
+        thrust::fill(
+            thrust::device, ngs_B.d_prop, ngs_B.d_prop + cells.get_d_n(), 0);
+        thrust::fill(
+            thrust::device, ngs_Ac.d_prop, ngs_Ac.d_prop + cells.get_d_n(), 0);
+        thrust::fill(
+            thrust::device, ngs_Bc.d_prop, ngs_Bc.d_prop + cells.get_d_n(), 0);
+        thrust::fill(
+            thrust::device, ngs_Ad.d_prop, ngs_Ad.d_prop + cells.get_d_n(), 0);
+        thrust::fill(
+            thrust::device, ngs_Bd.d_prop, ngs_Bd.d_prop + cells.get_d_n(), 0);
 
         // return wall_forces<Cell, boundary_force>(n, d_X, d_dX, 0);
         if (h_pm.adv_switch)
@@ -593,6 +671,12 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     mech_str.copy_to_device();
     cell_type.copy_to_device();
     in_ray.copy_to_device();
+    ngs_A.copy_to_device();
+    ngs_B.copy_to_device();
+    ngs_Ac.copy_to_device();
+    ngs_Bc.copy_to_device();
+    ngs_Ad.copy_to_device();
+    ngs_Bd.copy_to_device();
 
     Vtk_output output{
         "out_" + std::to_string(walk_id) + "_" + std::to_string(step)};
@@ -617,35 +701,55 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     mech_str.copy_to_host();
     cell_type.copy_to_host();
     in_ray.copy_to_host();
+    ngs_A.copy_to_host();
+    ngs_B.copy_to_host();
+    ngs_Ac.copy_to_host();
+    ngs_Bc.copy_to_host();
+    ngs_Ad.copy_to_host();
+    ngs_Bd.copy_to_host();
 
     output.write_positions(cells);
     output.write_property(mech_str);
     output.write_property(cell_type);
     output.write_property(in_ray);
-    output.write_field(cells, "u", &Cell::u);  // write u of each cell to vtk
-    output.write_field(cells, "v", &Cell::v);
+    // output.write_field(cells, "u", &Cell::u);  // write u of each cell to
+    // vtk output.write_field(cells, "v", &Cell::v);
+    output.write_property(ngs_A);
+    output.write_property(ngs_B);
+    output.write_property(ngs_Ac);
+    output.write_property(ngs_Bc);
+    output.write_property(ngs_Ad);
+    output.write_property(ngs_Bd);
 
 
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
         for (float T = 0.0; T < 1.0; T += h_pm.dt) {
+            // printf("T = %f\n", T);
             generate_noise<<<(cells.get_d_n() + 32 - 1) / 32, 32>>>(
                 cells.get_d_n(),
                 d_state);  // generate random noise which we will use later
                            // on to move the cells
-            if (h_pm.prolif_switch)
+            if (h_pm.prolif_switch) {
+                stage_new_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                    cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
+                    cells.d_n);  // stage new cells
+                cells.take_step<pairwise_force>(0.0, generic_function);
                 proliferation<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
                     cells.d_n);  // simulate proliferation
+            }
             if (h_pm.type_switch)
                 cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), cells.d_X);  // switch cell types if
             // conditions are met
+
+
             cells.take_step<pairwise_force, friction_on_background>(
                 h_pm.dt, generic_function);
             if (h_pm.death_switch)
                 death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X, cells.d_n, d_state);
+                    cells.get_d_n(), d_state, cells.d_X, cells.d_n);
         }
 
         if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
@@ -653,13 +757,26 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             mech_str.copy_to_host();
             cell_type.copy_to_host();
             in_ray.copy_to_host();
+            ngs_A.copy_to_host();
+            ngs_B.copy_to_host();
+            ngs_Ac.copy_to_host();
+            ngs_Bc.copy_to_host();
+            ngs_Ad.copy_to_host();
+            ngs_Bd.copy_to_host();
+
 
             output.write_positions(cells);
             output.write_property(mech_str);
             output.write_property(cell_type);
             output.write_property(in_ray);
-            output.write_field(cells, "u", &Cell::u);
-            output.write_field(cells, "v", &Cell::v);
+            // output.write_field(cells, "u", &Cell::u);
+            // output.write_field(cells, "v", &Cell::v);
+            output.write_property(ngs_A);
+            output.write_property(ngs_B);
+            output.write_property(ngs_Ac);
+            output.write_property(ngs_Bc);
+            output.write_property(ngs_Ad);
+            output.write_property(ngs_Bd);
         }
     }
     return 0;
@@ -668,11 +785,5 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 // compile tissue_sim as main when this file is not included as library
 // elsewhere
 #ifndef COMPILE_AS_LIBRARY
-int main(int argc, char const* argv[])
-{
-    int walk_id = 0, step = 0;
-    if (argc > 1) walk_id = std::atoi(argv[1]);
-    if (argc > 2) step = std::atoi(argv[2]);
-    return tissue_sim(argc, argv, walk_id, step);
-}
+int main(int argc, char const* argv[]) { return tissue_sim(argc, argv); }
 #endif
