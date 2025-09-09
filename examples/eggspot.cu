@@ -42,8 +42,8 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 {
     Pt dF{0};
 
-    if (dist > d_pm.r_max)
-        return dF;  // set cutoff for computing interaction forces
+    if (dist > d_pm.r_max)  // set cutoff for computing interaction
+        return dF;          // includes forces and diffusion
 
     if (i == j) {      // if the cell is interacting with itself
         dF += d_W[i];  // add stochasticity from the weiner process to the
@@ -324,8 +324,7 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
 
 int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 {
-    std::cout << std::fixed
-              << std::setprecision(6);  // set precision for floats
+    std::cout << std::fixed << std::setprecision(6);  // precision for floats
 
     /*
     Prepare Random Variable for the Implementation of the Wiener Process
@@ -356,7 +355,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
     // Initial conditions
     Solution<Cell, Gabriel_solver> cells{
-        h_pm.n_max, 50, h_pm.r_max};  // intialise solver
+        h_pm.n_max, h_pm.g_size, h_pm.r_max};  // initialise solver
+    // n_max, grid size, cube size respectively
     *cells.h_n = h_pm.n_0;
 
     float rays[h_pm.n_rays][2];  // initialise rays with default values
