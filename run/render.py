@@ -4,7 +4,7 @@ import math
 from matplotlib.patches import Polygon
 import matplotlib.pyplot as plt
 from vedo import Plotter, Points, show, addons, Text2D, Mesh, Line, Video
-from vedo import load, image, pyplot
+from vedo import load, image, pyplot, Axes
 import pandas as pd
 import numpy as np
 import alphashape
@@ -225,7 +225,9 @@ def pattern_stats():
         sys.stdout.flush()
         mesh = VTKS[i]
         # return positions of spot cells
-        x_spots = mesh.vertices[mesh.pointdata["cell_type"] == 1]
+        cell_types = mesh.pointdata["cell_type"]
+        mask = (cell_types == 1) | (cell_types == 3)
+        x_spots = mesh.vertices[mask]
         if x_spots.size == 0:  # skip if there no spot cells present in vtk
             continue
         # eps - maximum distance between two samples for one to be considered
@@ -341,7 +343,8 @@ def pattern_stats():
     video_length = 10
     if EXPORT:
         v = Video(
-            name=f"{FOLDER_PATH.rsplit('/', maxsplit=1)[-1]}_{C_PROP}_f1.mp4",
+            name=f"../run/saves/{FOLDER_PATH.rsplit('/', maxsplit=1)[-1]}" +
+            f"_{C_PROP}_f1.mp4",
             duration=video_length,
             backend="imageio")
 
@@ -359,8 +362,10 @@ def pattern_stats():
                 size=(1200, 900), sharecam=False)
     # p = Plotter(interactive=False, shape=(2,3), sharecam=False)
     # p.show(zoom="tight")#,axes=13)
-    p.show(zoom="tight", axes=1)
-    p.at(0).zoom(ZOOM)
+    axs = Axes(xtitle="x", ytitle="y", ztitle="z",
+               xrange=(-3.75, 3.75), yrange=(-1.25, 1.25))
+    p.show(zoom="tight", axes=axs)
+    # p.at(0).zoom(ZOOM)
 
     for frame, fig in zip(frames, figs):
         a_meshes, p_meshes, info, tags = frame
