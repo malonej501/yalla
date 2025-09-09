@@ -3,7 +3,7 @@ import pandas as pd
 import sympy as sp
 import matplotlib.pyplot as plt
 
-PLOT = 2  # 0: single force, 1: force for all cells, 2: forces and potentials
+PLOT = 0  # 0: single force, 1: force for all cells, 2: forces and potentials
 INT_TYPE = 1  # 0: attraction, 1: pure repulsion
 EXPORT = True  # save plot as pdf
 V = True  # verbose
@@ -76,6 +76,7 @@ def plot_force_equation():
     A, a, R, r, d = sp.symbols('A a R r d')
     r_max_val, A_val, a_val, R_val, r_val = get_params(INT_TYPE)
     d_vals = np.linspace(0, r_max_val, 100)  # range for d
+    ints = ["spot-spot", "default"]
 
     # Calculate force values
     f_vals = [force_equation().subs({
@@ -83,20 +84,27 @@ def plot_force_equation():
     }) for d_val in d_vals]
 
     # Plotting
-    fig, ax = plt.subplots(figsize=(5, 4))
-    plt.plot(d_vals, f_vals)
+    fig, ax = plt.subplots(figsize=(4, 3))
+    for itype in [0, 1]:
+        r_max_val, A_val, a_val, R_val, r_val = get_params(itype)
+        f_vals = [force_equation().subs({
+            A: A_val, a: a_val, R: R_val, r: r_val, d: d_val
+        }) for d_val in d_vals]
+        plt.plot(d_vals, f_vals, label=ints[itype], color=f"C{itype}")
     plt.ylim(-0.05, 0.005)
-    plt.xlabel("d")
-    plt.ylabel('F')
+    plt.legend(title="Interaction", loc="lower right")
+    plt.xlabel("Separation distance ($mm$)")
+    plt.ylabel("Force ($mm t^{-1}$)")
     plt.grid(alpha=0.3)
-    if INT_TYPE == 1:
-        plt.title('Force equation for attraction/repulsion')
-    elif INT_TYPE == 2:
-        plt.title('Force equation for pure repulsion')
+    plt.title("")
+    # if INT_TYPE == 1:
+    #     plt.title('Force equation for attraction/repulsion')
+    # elif INT_TYPE == 2:
+    #     plt.title('Force equation for pure repulsion')
 
     plt.tight_layout()
     if EXPORT:
-        plt.savefig('force_equation.pdf', bbox_inches='tight')
+        plt.savefig('force_equation.svg', bbox_inches='tight')
     plt.show()
 
 
@@ -179,6 +187,8 @@ def plot_force_and_potential():
         # ax.set_yscale("log")
     fig.supxlabel(r"Separation distance ($mm $)")
     fig.legend(loc="outside right", title="Interaction")
+    if EXPORT:
+        plt.savefig('force_equation_all_interactions.pdf', bbox_inches='tight')
     plt.show()
 
 
