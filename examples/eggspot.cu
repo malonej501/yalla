@@ -409,6 +409,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     // Solution<Cell, Gabriel_solver> cells{h_pm.n_max, h_pm.g_size,
     // h_pm.r_max}; args are n_max, grid_size, cube_size, gabriel_coefficient
     Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
+    Solution<Po_cell, Grid_solver> wall_nodes{h_pm.wn_max};  // for wall nodes
     // *cells.h_n = h_pm.n_0;
 
     float rays[h_pm.n_rays][2];  // initialise rays with default values
@@ -547,6 +548,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         in_ray.h_prop[i] = false;
     }
 
+    relaxed_sphere(0.8, wall_nodes);  // initialise wall nodes in a disk
+
     // Copy the ray data to the device
     cudaMemcpy(
         d_rays, &rays, h_pm.n_rays * 2 * sizeof(float), cudaMemcpyHostToDevice);
@@ -573,6 +576,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     };
 
     cells.copy_to_device();
+    wall_nodes.copy_to_device();
     mech_str.copy_to_device();
     cell_type.copy_to_device();
     in_ray.copy_to_device();
@@ -580,6 +584,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     Vtk_output output{
         "out_" + std::to_string(walk_id) + "_" + std::to_string(step)};
     // create instance of Vtk_output class
+    Vtk_output wall_output{
+        "out_wall_" + std::to_string(walk_id) + "_" + std::to_string(step)};
 
 
     /* the neighbours are initialised with 0. However, you want to use them
@@ -597,16 +603,20 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
     // write out initial condition
     cells.copy_to_host();
+    // wall_nodes.copy_to_host();
     mech_str.copy_to_host();
     cell_type.copy_to_host();
     in_ray.copy_to_host();
+    wall_nodes.copy_to_host();
 
     output.write_positions(cells);
+    // output.write_positions(wall_nodes);
     output.write_property(mech_str);
     output.write_property(cell_type);
     output.write_property(in_ray);
     output.write_field(cells, "u", &Cell::u);  // write u of each cell to vtk
     output.write_field(cells, "v", &Cell::v);
+    wall_output.write_positions(wall_nodes);
 
 
     // Main simulation loop
@@ -623,7 +633,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             if (h_pm.type_switch)
                 cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), cells.d_X);  // switch cell types if
-            // conditions are met
+            // conditions are metq
             cells.take_step<pairwise_force, friction_on_background>(
                 h_pm.dt, generic_function);
             if (h_pm.death_switch)
@@ -633,16 +643,20 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
         if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
             cells.copy_to_host();
+            // wall_nodes.copy_to_host();
             mech_str.copy_to_host();
             cell_type.copy_to_host();
             in_ray.copy_to_host();
+            wall_nodes.copy_to_host();
 
             output.write_positions(cells);
+            // output.write_positions(wall_nodes);
             output.write_property(mech_str);
             output.write_property(cell_type);
             output.write_property(in_ray);
             output.write_field(cells, "u", &Cell::u);
             output.write_field(cells, "v", &Cell::v);
+            wall_output.write_positions(wall_nodes);
         }
     }
     return 0;
