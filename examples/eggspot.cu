@@ -43,13 +43,8 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 {
     Pt dF{0};
 
-<<<<<<< HEAD
-    if (dist > d_pm.r_max)  // set cutoff for computing interaction
-        return dF;          // includes forces and diffusion
-=======
     if (dist > d_pm.r_max)  // dist = norm3df(r.x, r.y, r.z) solvers line 308
         return dF;          // set cutoff for computing interaction forces
->>>>>>> 0416c672724565d1df8c8a083f645bae5cd8bb61
 
     if (i == j) {      // if the cell is interacting with itself
         dF += d_W[i];  // add stochasticity from the weiner process to the
@@ -387,11 +382,7 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
 
 int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 {
-<<<<<<< HEAD
-    std::cout << std::fixed << std::setprecision(6);  // precision for floats
-=======
     std::cout << std::fixed << std::setprecision(6);  // float precision
->>>>>>> 0416c672724565d1df8c8a083f645bae5cd8bb61
 
     // Prepare Random Variable for the Implementation of the Wiener Process
     curandState* d_state;  // define the random number generator on the GPU
@@ -414,19 +405,11 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     cudaMemcpyToSymbol(d_in_ray, &in_ray.d_prop, sizeof(d_in_ray));
     cudaMemcpyToSymbol(d_pm, &h_pm, sizeof(Pm));  // copy host params
 
-<<<<<<< HEAD
-    // Initial conditions
-    Solution<Cell, Gabriel_solver> cells{
-        h_pm.n_max, h_pm.g_size, h_pm.r_max};  // initialise solver
-    // n_max, grid size, cube size respectively
-    *cells.h_n = h_pm.n_0;
-=======
     // Solver
     // Solution<Cell, Gabriel_solver> cells{h_pm.n_max, h_pm.g_size,
     // h_pm.r_max}; args are n_max, grid_size, cube_size, gabriel_coefficient
     Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
     // *cells.h_n = h_pm.n_0;
->>>>>>> 0416c672724565d1df8c8a083f645bae5cd8bb61
 
     float rays[h_pm.n_rays][2];  // initialise rays with default values
     for (int i = 0; i < h_pm.n_rays; i++) {
