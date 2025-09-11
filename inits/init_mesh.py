@@ -1,8 +1,8 @@
 import sys
 from vedo import *
 
-DISPLAY = True
-EXTRUDE = True
+DISPLAY = False
+EXTRUDE = False
 FORMAT = 0  # 0: legacy vtk yalla compatible, 1: new vtk (from vedo)
 SHAPE = 2  # 0: 2D fin shape, 1: 2D rectangular shape,
 EXTRUDE_Z = 0.1  # extrude distance in z direction
@@ -15,7 +15,7 @@ def get_shape():
     Returns the vertices and faces of the fin mesh based on the SHAPE 
     variable.
     """
-    verts, faces = [], []
+    verts, faces, norms = [], [], []
     if SHAPE == 0:
         # 2D fin shape
         verts = [(-1, 0.5, 0), (0.75, 0.5, 0), (0.75, -0.5, 0),
@@ -34,11 +34,23 @@ def get_shape():
         verts = [(-ap/2, pd/2, 0), (ap/2, pd/2, 0),
                  (ap/2, -pd/2, 0), (-ap/2, -pd/2, 0)]
         faces = [[0, 1, 2, 3]]
+    
+    if SHAPE == 3:
+        ap = 7.5  # anterior-posterior length mm
+        pd = 2.5  # proximal-distal height mm
+        verts = [(0, pd/2, 0), # top
+                 (0, -pd/2, 0), # bottom
+                 (-ap/2, 0, 0), # left
+                 (ap/2, 0, 0)] # right
+        norms = [(0, 1, 0),
+                 (0, -1, 0),
+                 (-1, 0, 0), 
+                 (1, 0, 0)]
+        faces = [[0, 1, 2, 3, 4, 5, 6, 7]]
+    return verts, faces, norms
 
-    return verts, faces
 
-
-def export_vtk_custom(verts, faces):
+def export_vtk_custom(verts, faces, norms):
     """Export verts and faces manually to legacy vtk"""
 
     # Create the vtk file
@@ -65,6 +77,14 @@ def export_vtk_custom(verts, faces):
             for vert in face:
                 vtk_file.write(" " + str(vert))
             vtk_file.write("\n")
+
+        # Write the normals if they exist
+        if len(norms) == len(verts):
+            vtk_file.write("POINT_DATA " + str(len(verts)) + "\n")
+            vtk_file.write("NORMALS polarity float\n")
+            for norm in norms:
+                vtk_file.write(str(norm[0]) + " " +
+                               str(norm[1]) + " " + str(norm[2]) + "\n")
 
 
 def extrude_mesh(verts):
@@ -102,7 +122,7 @@ if __name__ == "__main__":
     print(f"FORMAT: {FORMAT}")
     print(f"SHAPE: {SHAPE}")
 
-    v, f = get_shape()  # get the shape vertices and faces
+    v, f, n = get_shape()  # get the shape vertices, faces and polarities
 
     if EXTRUDE:
         v, f = extrude_mesh(v)  # extrude in z-direction
@@ -120,6 +140,6 @@ if __name__ == "__main__":
         plt.interactive()
 
     if FORMAT == 0:
-        export_vtk_custom(f_mesh.vertices, f_mesh.cells)
+        export_vtk_custom(f_mesh.vertices, f_mesh.cells, n)
     elif FORMAT == 1:
         f_mesh.write(f"shape{SHAPE}_mesh.vtk", binary=False)
