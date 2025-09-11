@@ -378,6 +378,37 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
         if (d_pm.ad_dir == 0) d_dX[i].x += ad;  // +ve x direction
         if (d_pm.ad_dir == 1) d_dX[i].y -= ad;  // -ve y direction
     }
+    // if (d_cell_type[i] == 1) d_dX[i].x += 0.3;
+}
+
+__global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
+    Po_cell* d_wall_nodes, int n_wall_nodes)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n_cells) return;
+
+
+    // float min_displ = 1e6f;     // for storing displacement to nearest wall
+    // float3 min_nm = {0, 0, 0};  // for storing norm vec of closest wall node
+
+    for (int j = 0; j < n_wall_nodes; j++) {
+        float3 r;  // vector from cell to wall node
+        r.x = d_X[i].x - d_wall_nodes[j].x;
+        r.y = d_X[i].y - d_wall_nodes[j].y;
+        r.z = 0;
+        // retrieve unit normal vector of wall node
+        float3 nm = pol_to_float3(d_wall_nodes[j]);
+        nm.x *= -1;
+        nm.y *= -1;
+        // calculate displacement of cell to the wall dot product
+        float displ = (r.x * nm.x) + (r.y * nm.y) + (r.z * nm.z);
+        auto F_mag = fmaxf(-displ, 0);  // force magnitude
+        if (fabs(F_mag) > 0) {          // only if penetrating wall
+            d_dX[i].x +=
+                nm.x * F_mag;  // force is product of displ and norm vec
+            d_dX[i].y += nm.y * F_mag;
+        }
+    }
 }
 
 int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
@@ -548,7 +579,13 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         in_ray.h_prop[i] = false;
     }
 
-    relaxed_sphere(0.8, wall_nodes);  // initialise wall nodes in a disk
+    // Initialise the wall nodes from file
+    Vtk_input input{"../inits/shape3_mesh_2D.vtk"};
+    // relaxed_sphere(0.8, wall_nodes);  // initialise wall nodes in a disk
+    input.read_positions(wall_nodes);  // read in wall nodes from a file
+    input.read_polarity(wall_nodes);   // read in wall node polarity
+    *wall_nodes.h_n =
+        input.n_points;  // set the number of wall nodes to read in
 
     // Copy the ray data to the device
     cudaMemcpy(
@@ -571,8 +608,11 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             advection<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                 cells.get_d_n(), d_X, d_dX, d_rays, time_step);
         if (h_pm.fin_walls)
-            return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX, 0,
-                h_pm.w_off_s);  //, num_walls, wall_normals, wall_offsets);
+            // return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX,
+            // 0,
+            //     h_pm.w_off_s);  //, num_walls, wall_normals, wall_offsets);
+            wall_forces_new<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                cells.get_d_n(), d_X, d_dX, wall_nodes.d_X, *wall_nodes.h_n);
     };
 
     cells.copy_to_device();
@@ -617,6 +657,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     output.write_field(cells, "u", &Cell::u);  // write u of each cell to vtk
     output.write_field(cells, "v", &Cell::v);
     wall_output.write_positions(wall_nodes);
+    wall_output.write_polarity(wall_nodes);
 
 
     // Main simulation loop
@@ -657,6 +698,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             output.write_field(cells, "u", &Cell::u);
             output.write_field(cells, "v", &Cell::v);
             wall_output.write_positions(wall_nodes);
+            wall_output.write_polarity(wall_nodes);
         }
     }
     return 0;
