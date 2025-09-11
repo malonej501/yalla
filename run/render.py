@@ -5,7 +5,7 @@ import math
 from matplotlib.patches import Polygon
 import matplotlib.pyplot as plt
 from vedo import Plotter, Points, show, addons, Text2D, Mesh, Line, Video
-from vedo import load, image, pyplot, Axes
+from vedo import load, image, pyplot, Axes, Glyph, Arrow, NormalLines
 import pandas as pd
 import numpy as np
 import alphashape
@@ -79,6 +79,8 @@ def render_movie():
         wpts = Points([])  # empty points object
         if WALLS:
             wpts = Points(W_VTKS[i]).point_size(PT_SIZE * ZOOM).color("black")
+        wnrms = Glyph(wpts, Arrow().scale(0.5), "normals", c="blue")
+
         # lims = ((pts.bounds()[0],pts.bounds()[1]),
         # (pts.bounds()[2],pts.bounds()[3]))
         if C_PROP == "cell_type":  # ensure cmap for c_type is constant
@@ -100,12 +102,14 @@ def render_movie():
 
         pts.name = "cells"
         wpts.name = "wall_nodes"
+        wnrms.name = "wall_normals"
         br.name = "bar"
         info.name = "info"
-        frames.append((pts, wpts, br, info))
+        frames.append((pts, wpts, wnrms, br, info))
         # Add the mesh to the plotter
         p.remove("cells").add(pts)
         p.remove("wall_nodes").add(wpts)
+        p.remove("wall_normals").add(wnrms)
         p.remove("info").add(info)
         p.remove("bar").add(br)
         # if i == 0:  # only add bar once to avoid flickering
@@ -120,10 +124,11 @@ def render_movie():
 
     def slider1(widget, _):
         val = widget.value  # get the slider current value
-        pts, wpts, br, info = frames[int(val)]
+        pts, wpts, wnrms, br, info = frames[int(val)]
 
         p.remove("cells").add(pts)
         p.remove("wall_nodes").add(wpts)
+        p.remove("wall_normals").add(wnrms)
         p.remove("bar").add(br)
         p.remove("info").add(info)
 
@@ -136,7 +141,7 @@ def render_movie():
         if val == slider2.prev_val:  # only update if int val has changed
             return
         slider2.prev_val = val
-        pts, wpts, br, info = frames[int(val)]  # get current frame
+        pts, wpts, wnrms, br, info = frames[int(val)]  # get current frame
         c_prop_local = pts.pointdata.keys()[val]  # return new cmap from slider
 
         # change the cmap for and bar to the current frame
@@ -147,10 +152,10 @@ def render_movie():
         p.render()
 
         # change the cmap for and add bar to all frames
-        for k, (pts, wpts, b, info) in enumerate(frames):
+        for k, (pts, wpts, wnrms, b, info) in enumerate(frames):
             pts = pts.cmap(cmap, c_prop_local)
             b = br
-            frames[k] = (pts, wpts, b, info)
+            frames[k] = (pts, wpts, wnrms, b, info)
 
     p.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
     p.add_slider(slider2, 0, len(pts.pointdata.keys())-1,
