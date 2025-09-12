@@ -195,15 +195,29 @@ class Landmarker:
                 rows.append({"image": os.path.basename(img),
                             "landmark": i, "x": x, "y": y, "type": typ})
         df = pd.DataFrame(rows)
+        df.insert(0, 'id', df['image'].apply(lambda x: x.split('_')[0]))
+        df.insert(1, 'date', df['image'].apply(lambda x: x.split('_')[-2]))
+        df.insert(2, 'idx', df['image'].apply(
+            lambda x: int(x.split('_')[-1].split('.')[0])))
         df.to_csv(out_path, index=False)
         print(f"Landmarks saved to {out_path}")
 
 
+def landmarks_to_vtk(path):
+    """Convert landmark points to VTK format for 3D visualization."""
+
+    lmks = pd.read_csv(path)
+
+    lmks.to_csv("landmarks.csv", index=False)
+
+
 if __name__ == "__main__":
     # dir_path = "wild_data"
-    D = "adult_benthic_all_images"
 
     # img_paths = load_imgs_from_directory(dir_path)
     # count_taxa(img_paths)
-    lm = Landmarker(D)
+
+    lm = Landmarker("adult_benthic_all_images")
     lm.run()
+
+    # landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv")
