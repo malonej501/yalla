@@ -208,7 +208,46 @@ def landmarks_to_vtk(path):
 
     lmks = pd.read_csv(path)
 
-    lmks.to_csv("landmarks.csv", index=False)
+    print(lmks)
+    for fish in lmks["id"].unique():
+        f_lmks = lmks[lmks["id"] == fish]
+        for i, date in enumerate(f_lmks["date"].unique()):
+
+            f_lmks_i = f_lmks[f_lmks["date"] == date]
+            vtk_path = os.path.join(
+                os.path.dirname(path), f"lmk_{fish}_{date}_{i}_landmarks.vtk")
+
+            scale_bar = f_lmks_i[f_lmks_i["type"] == "s"]
+            if len(scale_bar) != 2:
+                print(
+                    f"Skipping {fish}_{date}_{i}: need exactly 2 scale bar "
+                    + f"points, found {len(scale_bar)}")
+                continue
+            sb_len = ((scale_bar.iloc[0]["x"] - scale_bar.iloc[1]["x"])**2 +
+                      (scale_bar.iloc[0]["y"] - scale_bar.iloc[1]["y"])**2
+                      )**0.5
+            print(f"1mm scale bar len {fish}_{date}_{i}: {sb_len:.2f} pixels")
+
+            # Convert from pixels to mm (assuming 1mm scale bar)
+            f_lmks_i = f_lmks_i.copy()  # Make an explicit copy
+            f_lmks_i.loc[:, "x_mm"] = round(f_lmks_i["x"] / sb_len, 3)
+            f_lmks_i.loc[:, "y_mm"] = round(f_lmks_i["y"] / sb_len, 3)
+
+            # remove scale bar points
+            f_lmks_i = f_lmks_i[f_lmks_i["type"] != "s"]
+
+            with open(vtk_path, 'w', encoding='utf-8') as f:
+                f.write("# vtk DataFile Version 3.0\n")
+                f.write(f"{fish} landmarks\n")
+                f.write("ASCII\n")
+                f.write("DATASET POLYDATA\n")
+                f.write(f"POINTS {len(f_lmks_i)} float\n")
+                for _, row in f_lmks_i.iterrows():
+                    f.write(f"{row['x_mm']} {row['y_mm']} 0.0\n")
+                f.write(f"POLYGONS 1 {len(f_lmks_i) + 1}\n")
+                f.write(f"{len(f_lmks_i)} ")
+                f.write(" ".join(str(j) for j in range(len(f_lmks_i))))
+            print(f"VTK landmarks saved to {vtk_path}")
 
 
 if __name__ == "__main__":
@@ -217,7 +256,7 @@ if __name__ == "__main__":
     # img_paths = load_imgs_from_directory(dir_path)
     # count_taxa(img_paths)
 
-    lm = Landmarker("adult_benthic_all_images")
-    lm.run()
+    # lm = Landmarker("adult_benthic_all_images")
+    # lm.run()
 
-    # landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv")
+    landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv")
