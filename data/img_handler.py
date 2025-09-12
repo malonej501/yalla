@@ -64,11 +64,16 @@ class Landmarker:
     """
     Class for landmarking fin images with mouse clicks.
 
-    Start with anterior edge and proceed clockwise. Type switches to fin
-    automatically after the first two edge points - assumed to be anterior
-    followed by posterior.
+    - Start with landmarking the scale bar. Left side first.
+    - Next label the posterior proximal corner of the fin, then the anterior
+    proximal corner.
+    - Then proceed to landmark the ray tips, anti-clockwise from anterior
+    to posterior.
+    - Landmark type switches automatically to edge after first two scale bar
+    points and to fin automatically after the first two edge points.
 
     Press 'f' for fin landmark (red), 'e' for edge landmark (green).
+        's' for scalebar landmark (blue).
     Press 'r' to remove the last point.
     Press 'n' to move to the next image.
     Press 'q' to quit and save all landmarks to a CSV file.
@@ -98,8 +103,12 @@ class Landmarker:
             self.current_points.append((x, y))
             self.current_types.append(self.current_type)
             self.redraw_image()
-            # Automatically switch to fin after two edges
-            if len(self.current_types) >= 2 and self.current_types[-2:] == ["e", "e"]:
+            # Switch to edge after two scalebar points
+            if len(self.current_types) >= 2 and self.current_types[-2:] == ["s", "s"]:
+                self.current_type = "e"
+                print("Automatically switched to edge landmark (green)")
+            # Switch to fin after two edge points
+            elif len(self.current_types) >= 4 and self.current_types[-2:] == ["e", "e"]:
                 self.current_type = "f"
                 print("Automatically switched to fin landmark (red)")
 
@@ -107,8 +116,14 @@ class Landmarker:
         """Redraw the image with current points."""
         img_copy = self.current_img.copy()
         for i, (pt, typ) in enumerate(zip(self.current_points, self.current_types)):
-            color = (0, 0, 255) if typ == "f" else (
-                0, 255, 0)  # red for fin, green for edge
+            if typ == "f":
+                color = (0, 0, 255)  # red for fin
+            elif typ == "e":
+                color = (0, 255, 0)  # green for edge (anterior/posterior)
+            elif typ == "s":
+                color = (255, 0, 0)  # blue for scalebar
+            else:
+                color = (0, 0, 0)    # fallback
             cv2.circle(img_copy, pt, 5, color, -1)
             cv2.putText(img_copy, f"{i+1}{typ}", (pt[0]+8, pt[1]-8),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
@@ -125,7 +140,7 @@ class Landmarker:
             out_img_path = os.path.splitext(img_path)[0] + "_landmarked.png"
             self.current_points = []
             self.current_types = []
-            self.current_type = "e"
+            self.current_type = "s"
             h, w = img.shape[:2]
             scale = min(max_width / w, max_height / h, 1.0)
             if scale < 1.0:
@@ -159,6 +174,9 @@ class Landmarker:
                 elif key == ord('e'):  # Switch to edge
                     self.current_type = "e"
                     print("Landmark type: edge (green)")
+                elif key == ord('s'):  # Switch to scalebar
+                    self.current_type = "s"
+                    print("Landmark type: scalebar (blue)")
                 elif key == ord('q'):  # Quit
                     self.landmarks[img_path] = list(
                         zip(self.current_points, self.current_types))
