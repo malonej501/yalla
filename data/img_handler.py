@@ -64,7 +64,10 @@ class Landmarker:
     """
     Class for landmarking fin images with mouse clicks.
 
-    Start with anterior edge and proceed clockwise.
+    Start with anterior edge and proceed clockwise. Type switches to fin
+    automatically after the first two edge points - assumed to be anterior
+    followed by posterior.
+
     Press 'f' for fin landmark (red), 'e' for edge landmark (green).
     Press 'r' to remove the last point.
     Press 'n' to move to the next image.
@@ -95,6 +98,10 @@ class Landmarker:
             self.current_points.append((x, y))
             self.current_types.append(self.current_type)
             self.redraw_image()
+            # Automatically switch to fin after two edges
+            if len(self.current_types) >= 2 and self.current_types[-2:] == ["e", "e"]:
+                self.current_type = "f"
+                print("Automatically switched to fin landmark (red)")
 
     def redraw_image(self):
         """Redraw the image with current points."""
@@ -164,12 +171,11 @@ class Landmarker:
 
     def save_landmarks(self, out_path="landmarks.csv"):
         """Save all landmarks to a CSV file."""
-        import pandas as pd
         rows = []
         for img, pts_types in self.landmarks.items():
             for i, ((x, y), typ) in enumerate(pts_types):
                 rows.append({"image": os.path.basename(img),
-                            "landmark": i+1, "x": x, "y": y, "type": typ})
+                            "landmark": i, "x": x, "y": y, "type": typ})
         df = pd.DataFrame(rows)
         df.to_csv(out_path, index=False)
         print(f"Landmarks saved to {out_path}")
