@@ -61,8 +61,14 @@ def count_taxa(img_paths):
 
 
 class Landmarker:
-    """Class for manually landmarking images using OpenCV.
-    Start from the anterior edge of the fin and proceed clockwise.
+    """
+    Class for landmarking fin images with mouse clicks.
+
+    Start with anterior edge and proceed clockwise.
+    Press 'f' for fin landmark (red), 'e' for edge landmark (green).
+    Press 'r' to remove the last point.
+    Press 'n' to move to the next image.
+    Press 'q' to quit and save all landmarks to a CSV file.
     """
 
     def __init__(self, dir_path):
@@ -70,38 +76,49 @@ class Landmarker:
         self.imgs = pd.DataFrame({"path": load_imgs_from_directory(dir_path)})
         self.imgs["id"] = self.imgs["path"].apply(
             lambda x: os.path.basename(x).split("_")[0])
-        self.imgs["date"] = self.imgs["path"].apply(  # DD-MM
+        self.imgs["date"] = self.imgs["path"].apply(
             lambda x: x.split("_")[-2])
         self.imgs["idx"] = self.imgs["path"].apply(
             lambda x: int(x.split("_")[-1].split(".")[0]))
         self.imgs = self.imgs.sort_values(
             by=["id", "idx"]).reset_index(drop=True)
-        self.landmarks = {}  # {img_path: [(x1, y1), (x2, y2), ...]}
+        self.landmarks = {}  # {img_path: [(x, y, type), ...]}
         self.current_points = []
+        self.current_types = []
         self.current_img = None
         self.current_img_path = None
+        self.current_type = "f"  # "f" for fin, "e" for edge
 
     def mouse_callback(self, event, x, y, flags, param):
         """Handle mouse events to record landmark points."""
         if event == cv2.EVENT_LBUTTONDOWN:
             self.current_points.append((x, y))
-            # img_copy = self.current_img.copy()
-            for i, pt in enumerate(self.current_points):
-                cv2.circle(self.current_img, pt, 5, (0, 0, 255), -1)
-                cv2.putText(self.current_img, str(i+1), (pt[0]+8, pt[1]-8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            cv2.imshow(self.current_img_path, self.current_img)
+            self.current_types.append(self.current_type)
+            self.redraw_image()
+
+    def redraw_image(self):
+        """Redraw the image with current points."""
+        img_copy = self.current_img.copy()
+        for i, (pt, typ) in enumerate(zip(self.current_points, self.current_types)):
+            color = (0, 0, 255) if typ == "f" else (
+                0, 255, 0)  # red for fin, green for edge
+            cv2.circle(img_copy, pt, 5, color, -1)
+            cv2.putText(img_copy, f"{i+1}{typ}", (pt[0]+8, pt[1]-8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+        cv2.imshow(self.current_img_path, img_copy)
+        self.current_img = img_copy
 
     def run(self):
-        """Main loop to display images and collect landmarks."""
+        """Run the landmarking process."""
         max_width, max_height = 2000, 1500
         for img_path in self.imgs["path"]:
             self.current_img_path = img_path
-            img_blank = cv2.imread(img_path)  # blank image for undo
+            img_blank = cv2.imread(img_path)
             img = cv2.imread(img_path)
             out_img_path = os.path.splitext(img_path)[0] + "_landmarked.png"
             self.current_points = []
-            # Resize image if larger than max dimensions
+            self.current_types = []
+            self.current_type = "e"
             h, w = img.shape[:2]
             scale = min(max_width / w, max_height / h, 1.0)
             if scale < 1.0:
@@ -114,25 +131,30 @@ class Landmarker:
             cv2.resizeWindow(img_path, max_width, max_height)
             cv2.setMouseCallback(img_path, self.mouse_callback)
             print(f"Displaying: {img_path}")
+            print("Press 'f' for fin landmark (red), 'e' for edge landmark (green).")
             while True:
                 cv2.imshow(img_path, self.current_img)
                 key = cv2.waitKey(20)
                 if key == ord('n'):  # Next image
-                    self.landmarks[img_path] = self.current_points.copy()
+                    self.landmarks[img_path] = list(
+                        zip(self.current_points, self.current_types))
                     cv2.imwrite(out_img_path, self.current_img)
                     break
                 elif key == ord('r'):  # Remove last point
-                    print(self.current_points)
-                    self.current_img = img_blank.copy()
                     if self.current_points:
                         self.current_points.pop()
-                    for i, pt in enumerate(self.current_points):
-                        cv2.circle(self.current_img, pt, 5, (0, 0, 255), -1)
-                        cv2.putText(self.current_img, str(i+1), (pt[0]+8, pt[1]-8),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                    cv2.imshow(img_path, self.current_img)
+                        self.current_types.pop()
+                    self.current_img = img_blank.copy()
+                    self.redraw_image()
+                elif key == ord('f'):  # Switch to fin
+                    self.current_type = "f"
+                    print("Landmark type: fin (red)")
+                elif key == ord('e'):  # Switch to edge
+                    self.current_type = "e"
+                    print("Landmark type: edge (green)")
                 elif key == ord('q'):  # Quit
-                    self.landmarks[img_path] = self.current_points.copy()
+                    self.landmarks[img_path] = list(
+                        zip(self.current_points, self.current_types))
                     cv2.imwrite(out_img_path, self.current_img)
                     cv2.destroyAllWindows()
                     self.save_landmarks()
@@ -141,13 +163,13 @@ class Landmarker:
         self.save_landmarks()
 
     def save_landmarks(self, out_path="landmarks.csv"):
-        """Save the collected landmarks to a CSV file."""
+        """Save all landmarks to a CSV file."""
         import pandas as pd
         rows = []
-        for img, pts in self.landmarks.items():
-            for i, (x, y) in enumerate(pts):
+        for img, pts_types in self.landmarks.items():
+            for i, ((x, y), typ) in enumerate(pts_types):
                 rows.append({"image": os.path.basename(img),
-                            "landmark": i+1, "x": x, "y": y})
+                            "landmark": i+1, "x": x, "y": y, "type": typ})
         df = pd.DataFrame(rows)
         df.to_csv(out_path, index=False)
         print(f"Landmarks saved to {out_path}")
