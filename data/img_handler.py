@@ -3,6 +3,8 @@
 import os
 import pandas as pd
 import cv2
+from matplotlib import pyplot as plt
+from vedo import *
 
 
 def load_imgs_from_directory(dir_path):
@@ -21,7 +23,7 @@ def load_imgs_from_directory(dir_path):
     for root, _, files in os.walk(dir_path):
         for file in files:
             if file.lower().endswith(supported_formats):
-                if "landmarked" in file:
+                if "lmk" in file:
                     continue  # Skip already landmarked images
                 img_paths.append(os.path.join(root, file))
 
@@ -137,7 +139,7 @@ class Landmarker:
             self.current_img_path = img_path
             img_blank = cv2.imread(img_path)
             img = cv2.imread(img_path)
-            out_img_path = os.path.splitext(img_path)[0] + "_landmarked.png"
+            out_img_path = os.path.splitext(img_path)[0] + "_lmk.png"
             self.current_points = []
             self.current_types = []
             self.current_type = "s"
@@ -153,7 +155,8 @@ class Landmarker:
             cv2.resizeWindow(img_path, max_width, max_height)
             cv2.setMouseCallback(img_path, self.mouse_callback)
             print(f"Displaying: {img_path}")
-            print("Press 'f' for fin landmark (red), 'e' for edge landmark (green).")
+            print("Press 'f' for fin landmark (red), 'e' for edge landmark (green)," +
+                  " 's' for scale-bar landmark (blue).")
             while True:
                 cv2.imshow(img_path, self.current_img)
                 key = cv2.waitKey(20)
@@ -182,7 +185,8 @@ class Landmarker:
                         zip(self.current_points, self.current_types))
                     cv2.imwrite(out_img_path, self.current_img)
                     cv2.destroyAllWindows()
-                    self.save_landmarks()
+                    self.save_landmarks(
+                        f"{os.path.basename(self.dir_path)}_lmks.csv")
                     return
             cv2.destroyAllWindows()
         self.save_landmarks()
@@ -215,7 +219,7 @@ def landmarks_to_vtk(path):
 
             f_lmks_i = f_lmks[f_lmks["date"] == date]
             vtk_path = os.path.join(
-                os.path.dirname(path), f"lmk_{fish}_{date}_{i}_landmarks.vtk")
+                os.path.dirname(path), f"{fish}_{date}_{i}_lmk.vtk")
 
             scale_bar = f_lmks_i[f_lmks_i["type"] == "s"]
             if len(scale_bar) != 2:
@@ -250,13 +254,73 @@ def landmarks_to_vtk(path):
             print(f"VTK landmarks saved to {vtk_path}")
 
 
+def visualise_landmark_vtks(dir_path):
+    """Use matplotlib to plot the mesh time series."""
+
+    vtk_files = [os.path.join(dir_path, f) for f in os.listdir(
+        dir_path) if f.endswith('.vtk')]
+    if not vtk_files:
+        print(f"No VTK files found in directory: {dir_path}")
+        return
+
+    # Sort by the number after the last '_' and before the '.'
+    vtk_files = sorted(
+        vtk_files,
+        key=lambda x: int(os.path.basename(x).split('_')[-2])
+    )
+    # Remove known problematic file - the scale bar is wrong
+    vtk_files.remove("lmk_DA-1-10_12-09-25/DA-1-10_17-07_1_lmk.vtk")
+
+    # Determine global x and y limits
+    all_x = []
+    all_y = []
+    for vtk_file in vtk_files:
+        mesh = Mesh(vtk_file)
+        all_x.extend(mesh.vertices[:, 0])
+        all_y.extend(mesh.vertices[:, 1])
+
+    x_min, x_max = min(all_x), max(all_x)
+    y_min, y_max = min(all_y), max(all_y)
+
+    fig, axs = plt.subplots(figsize=(16, 8), nrows=3, ncols=4,
+                            # sharex=True, sharey=True,
+                            layout="constrained")
+    for vtk_file, ax in zip(vtk_files, axs.flatten()):
+
+        mesh = Mesh(vtk_file)
+        x = mesh.vertices[:, 0]
+        y = mesh.vertices[:, 1]
+        ax.scatter(x, y, c='C0')
+        # Connect all points in order, including last to first
+        x_closed = list(x) + [x[0]]
+        y_closed = list(y) + [y[0]]
+        ax.plot(x_closed, y_closed, color='C0', linewidth=1)
+        for i, point in enumerate(mesh.vertices):
+            ax.text(point[0], point[1], str(i), fontsize=9, color='red')
+        ax.set_title(f"{os.path.basename(vtk_file)}")
+        ax.grid(alpha=0.3)
+        ax.set_aspect("equal")
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.invert_yaxis()
+
+    fig.supxlabel('X (mm)')
+    fig.supylabel('Y (mm)')
+
+    for ax in axs.flatten()[len(vtk_files):]:
+        ax.axis("off")  # switch off unused subplots
+
+    plt.show()
+
+
 if __name__ == "__main__":
     # dir_path = "wild_data"
 
     # img_paths = load_imgs_from_directory(dir_path)
     # count_taxa(img_paths)
 
-    # lm = Landmarker("adult_benthic_all_images")
-    # lm.run()
+    lm = Landmarker("adult_benthic_all_images")
+    lm.run()
 
-    landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv")
+    # landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv")
+    # visualise_landmark_vtks("lmk_DA-1-10_12-09-25")
