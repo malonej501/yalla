@@ -207,7 +207,7 @@ class Landmarker:
         print(f"Landmarks saved to {out_path}")
 
 
-def landmarks_to_vtk(path):
+def landmarks_to_vtk(path, transform=True):
     """Convert landmark points to VTK format for 3D visualization."""
 
     lmks = pd.read_csv(path)
@@ -221,6 +221,11 @@ def landmarks_to_vtk(path):
             vtk_path = os.path.join(
                 os.path.dirname(path), f"{fish}_{date}_{i}_lmk.vtk")
 
+            # Translate and rotate landmarks to standard orientation
+            if transform:
+                f_lmks_i = transform_landmarks(f_lmks_i, t=True, r=True)
+
+            # Convert from pixels to mm (assuming 1mm scale bar)
             scale_bar = f_lmks_i[f_lmks_i["type"] == "s"]
             if len(scale_bar) != 2:
                 print(
@@ -232,7 +237,7 @@ def landmarks_to_vtk(path):
                       )**0.5
             print(f"1mm scale bar len {fish}_{date}_{i}: {sb_len:.2f} pixels")
 
-            # Convert from pixels to mm (assuming 1mm scale bar)
+            # Divide x and y by scale bar length to get mm
             f_lmks_i = f_lmks_i.copy()  # Make an explicit copy
             f_lmks_i.loc[:, "x_mm"] = round(f_lmks_i["x"] / sb_len, 3)
             f_lmks_i.loc[:, "y_mm"] = round(f_lmks_i["y"] / sb_len, 3)
@@ -254,9 +259,15 @@ def landmarks_to_vtk(path):
             print(f"VTK landmarks saved to {vtk_path}")
 
 
-def visualise_landmark_vtks(dir_path):
-    """Use matplotlib to plot the mesh time series."""
+def load_landmark_vtks(dir_path):
+    """Load all VTK landmark files from the specified directory.
 
+    Args:
+        dir_path (str): The path to the directory containing VTK files.
+    Returns:
+        meshes (list): A list of Mesh objects loaded from VTK files in 
+        the directory.
+    """
     vtk_files = [os.path.join(dir_path, f) for f in os.listdir(
         dir_path) if f.endswith('.vtk')]
     if not vtk_files:
@@ -271,11 +282,21 @@ def visualise_landmark_vtks(dir_path):
     # Remove known problematic file - the scale bar is wrong
     vtk_files.remove("lmk_DA-1-10_12-09-25/DA-1-10_17-07_1_lmk.vtk")
 
+    meshes = [Mesh(f) for f in vtk_files]  # Load as vedo Mesh objects
+
+    return meshes
+
+
+def visualise_landmark_vtks(dir_path):
+    """Use matplotlib to plot the mesh time series."""
+
+    meshes = load_landmark_vtks(dir_path)
+    # meshes_trans = transform_landmarks(vtk_files, t=True, r=True)
+
     # Determine global x and y limits
     all_x = []
     all_y = []
-    for vtk_file in vtk_files:
-        mesh = Mesh(vtk_file)
+    for mesh in meshes:
         all_x.extend(mesh.vertices[:, 0])
         all_y.extend(mesh.vertices[:, 1])
 
@@ -285,9 +306,8 @@ def visualise_landmark_vtks(dir_path):
     fig, axs = plt.subplots(figsize=(16, 8), nrows=3, ncols=4,
                             # sharex=True, sharey=True,
                             layout="constrained")
-    for vtk_file, ax in zip(vtk_files, axs.flatten()):
+    for mesh, ax in zip(meshes, axs.flatten()):
 
-        mesh = Mesh(vtk_file)
         x = mesh.vertices[:, 0]
         y = mesh.vertices[:, 1]
         ax.scatter(x, y, c='C0')
@@ -297,7 +317,7 @@ def visualise_landmark_vtks(dir_path):
         ax.plot(x_closed, y_closed, color='C0', linewidth=1)
         for i, point in enumerate(mesh.vertices):
             ax.text(point[0], point[1], str(i), fontsize=9, color='red')
-        ax.set_title(f"{os.path.basename(vtk_file)}")
+        ax.set_title(f"{os.path.basename(mesh.filename)}")
         ax.grid(alpha=0.3)
         ax.set_aspect("equal")
         ax.set_xlim(x_min, x_max)
@@ -307,10 +327,52 @@ def visualise_landmark_vtks(dir_path):
     fig.supxlabel('X (mm)')
     fig.supylabel('Y (mm)')
 
-    for ax in axs.flatten()[len(vtk_files):]:
+    for ax in axs.flatten()[len(meshes):]:
         ax.axis("off")  # switch off unused subplots
 
     plt.show()
+
+
+def transform_landmarks(lmks, t=True, r=True):
+    """Transform landmark lmks to standard orientation and position.
+    Applies a translation and rotation based on the first two edge
+    landmarks (posterior and anterior proximal corners of the fin).
+
+    Args:
+        lmks (pd.DataFrame): DataFrame containing landmark data for
+            a single fish image.
+        t (bool): Whether to apply translation.
+        r (bool): Whether to apply rotation.
+    Returns:
+        pd.DataFrame: Transformed landmark DataFrame.
+    """
+
+    print(lmks)
+    # Get anterior and posterior edge points, assume order post, ant
+    p, a = lmks[lmks["type"] == "e"][["x", "y"]].values
+
+    if t:
+        lmks.loc[:, "x"] = lmks["x"] - a[0]
+        lmks.loc[:, "y"] = lmks["y"] - a[1]
+
+        p, a = lmks[lmks["type"] == "e"][["x", "y"]].values
+
+    if r:
+        ap = p - a  # vector from anterior to posterior edge point
+        angle_rad = -(np.arctan2(ap[1], ap[0]))
+        cos_angle = np.cos(angle_rad)
+        sin_angle = np.sin(angle_rad)
+
+        def rotate_point(x, y):
+            x_new = x * cos_angle - y * sin_angle
+            y_new = x * sin_angle + y * cos_angle
+            return x_new, y_new
+
+        lmks[["x", "y"]] = lmks.apply(
+            lambda row: rotate_point(row["x"], row["y"]),
+            axis=1, result_type='expand')
+
+    return lmks
 
 
 if __name__ == "__main__":
@@ -319,8 +381,8 @@ if __name__ == "__main__":
     # img_paths = load_imgs_from_directory(dir_path)
     # count_taxa(img_paths)
 
-    lm = Landmarker("adult_benthic_all_images")
-    lm.run()
+    # lm = Landmarker("adult_benthic_all_images")
+    # lm.run()
 
-    # landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv")
-    # visualise_landmark_vtks("lmk_DA-1-10_12-09-25")
+    landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv")
+    visualise_landmark_vtks("lmk_DA-1-10_12-09-25")
