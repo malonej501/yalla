@@ -11,7 +11,9 @@
 #include <thrust/remove.h>
 
 #include <cmath>
+#include <filesystem>
 #include <iterator>
+#include <regex>
 
 #include "../include/dtypes.cuh"
 #include "../include/inits.cuh"
@@ -451,15 +453,25 @@ __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
 //     }
 // }
 
-// void update_wall_nodes_from_vtk(
-//     const std::string& filename, Solution<Po_cell, Grid_solver>& wall_nodes)
-// {
-//     Vtk_input input{filename};
-//     input.read_positions(wall_nodes);
-//     input.read_polarity(wall_nodes);
-//     *wall_nodes.h_n = input.n_points;
-//     wall_nodes.copy_to_device();
-// }
+void update_wall_nodes_from_vtk(
+    const std::string& filename, Solution<Po_cell, Grid_solver>& wall_nodes)
+{
+    Vtk_input input{filename};
+    input.read_positions(wall_nodes);
+    input.read_polarity(wall_nodes);
+    *wall_nodes.h_n = input.n_points;
+    wall_nodes.copy_to_device();
+}
+
+int extract_number(const std::string& filename)
+{
+    // Example filename: DA-1-10_12-07_0_lmk.vtk
+    // Want to extract the '0' before '_lmk.vtk'
+    std::regex re("_(\\d+)_[^_]+\\.vtk$");
+    std::smatch match;
+    if (std::regex_search(filename, match, re)) { return std::stoi(match[1]); }
+    return -1;  // or throw/handle error
+}
 
 int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 {
@@ -630,8 +642,21 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     }
 
     // Initialise the wall nodes from file
+    std::vector<std::string> wall_files;
+    for (const auto& entry :  // collect all wall file names
+        std::filesystem::directory_iterator("../data/lmk_DA-1-10_12-09-25/")) {
+        if (entry.path().extension() != ".vtk") continue;
+        wall_files.push_back(entry.path().string());
+    }
+    std::sort(wall_files.begin(), wall_files.end(),  // sort by stage number
+        [](const std::string& a, const std::string& b) {
+            return extract_number(a) < extract_number(b);
+        });
+    for (const auto& file : wall_files)
+        std::cout << "Wall file: " << file << std::endl;
+
     // Vtk_input input{"../inits/shape3_mesh_2D.vtk"};
-    Vtk_input input{"../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk"};
+    Vtk_input input{wall_files[0]};    // read in first wall file
     input.read_positions(wall_nodes);  // read in wall nodes from a file
     input.read_polarity(wall_nodes);   // read in wall node polarity
     *wall_nodes.h_n =
@@ -713,12 +738,12 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
-        // if (time_step > 0 && time_step % 100 == 0) {
-        //     std::string vtk_filename =
-        //         ".../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_" +
-        //         std::to_string(time_step / 100) + "_lmk.vtk";
-        //     update_wall_nodes_from_vtk(vtk_filename, wall_nodes);
-        // }
+        if (time_step > 0 && time_step % 100 == 0) {
+            std::string vtk_filename = wall_files[int(time_step / 100)];
+            std::cout << "Updating wall nodes from: " << vtk_filename
+                      << std::endl;
+            update_wall_nodes_from_vtk(vtk_filename, wall_nodes);
+        }
         for (float T = 0.0; T < 1.0; T += h_pm.dt) {
             generate_noise<<<(cells.get_d_n() + 32 - 1) / 32, 32>>>(
                 cells.get_d_n(),
