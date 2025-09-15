@@ -49,7 +49,7 @@ def render_frame():
     display.stop()
 
 
-def render_movie():
+def render_movie(walls=False):
     """Renders movie of growing tissue with one cell property colourised
     e.g. cell_type, u, mech_str"""
 
@@ -77,7 +77,7 @@ def render_movie():
 
         pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
         wpts = Points([])  # empty points object
-        if WALLS:
+        if walls:
             wpts = Points(W_VTKS[i]).point_size(PT_SIZE * ZOOM).color("black")
         wnrms = Glyph(wpts, Arrow().scale(0.5), "normals", c="blue")
 
@@ -671,7 +671,7 @@ if __name__ == "__main__":
             VTKS = load(cell_vtks)
             if WALLS and len(wall_vtks) > 0:
                 W_VTKS = load(wall_vtks)
-            render_movie()
+            render_movie(walls=True)
         elif FUNC == 1:
             cell_vtks, wall_vtks = get_cell_and_wall_vtks()
             VTKS = load(cell_vtks)
