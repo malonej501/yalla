@@ -207,7 +207,7 @@ class Landmarker:
         print(f"Landmarks saved to {out_path}")
 
 
-def landmarks_to_vtk(path, transform=True):
+def landmarks_to_vtk(path, transform=True, wallnodes=True, landmarks=True):
     """Convert landmark points to VTK format for 3D visualization."""
 
     lmks = pd.read_csv(path)
@@ -223,7 +223,7 @@ def landmarks_to_vtk(path, transform=True):
 
             # Translate and rotate landmarks to standard orientation
             if transform:
-                f_lmks_i = transform_landmarks(f_lmks_i, t=True, r=True)
+                f_lmks_i = transform_landmarks(f_lmks_i)
 
             # Convert from pixels to mm (assuming 1mm scale bar)
             scale_bar = f_lmks_i[f_lmks_i["type"] == "s"]
@@ -245,18 +245,65 @@ def landmarks_to_vtk(path, transform=True):
             # remove scale bar points
             f_lmks_i = f_lmks_i[f_lmks_i["type"] != "s"]
 
+            # Calculate wall normals
+            f_lmks_i = get_wallnorms(f_lmks_i)
+            f_lmks_i = f_lmks_i.round(5)  # round to avoid precision issues
+
             with open(vtk_path, 'w', encoding='utf-8') as f:
                 f.write("# vtk DataFile Version 3.0\n")
-                f.write(f"{fish} landmarks\n")
+                f.write(f"{fish} wallnodes\n")
                 f.write("ASCII\n")
                 f.write("DATASET POLYDATA\n")
-                f.write(f"POINTS {len(f_lmks_i)} float\n")
-                for _, row in f_lmks_i.iterrows():
-                    f.write(f"{row['x_mm']} {row['y_mm']} 0.0\n")
-                f.write(f"POLYGONS 1 {len(f_lmks_i) + 1}\n")
-                f.write(f"{len(f_lmks_i)} ")
-                f.write(" ".join(str(j) for j in range(len(f_lmks_i))))
-            print(f"VTK landmarks saved to {vtk_path}")
+
+                if wallnodes and landmarks:
+                    f.write(f"POINTS {len(f_lmks_i)} float\n")
+                    for _, row in f_lmks_i.iterrows():
+                        f.write(f"{row['x_mm']} {row['y_mm']} 0.0\n")
+                    f.write(f"POLYGONS 1 {len(f_lmks_i) + 1}\n")
+                    f.write(f"{len(f_lmks_i)} ")
+                    f.write(" ".join(str(j) for j in range(len(f_lmks_i))))
+                    f.write(f"\nPOINT_DATA {len(f_lmks_i)}\n")
+                    f.write("NORMALS polarity float\n")
+                    for _, row in f_lmks_i.iterrows():
+                        f.write(f"{row['x_pol']} {row['y_pol']} 0.0\n")
+
+                if landmarks and not wallnodes:
+                    f_lmks_i = f_lmks_i[f_lmks_i["type"] != "w_node"]
+                    f.write(f"POINTS {len(f_lmks_i)} float\n")
+                    for _, row in f_lmks_i.iterrows():
+                        f.write(f"{row['x_mm']} {row['y_mm']} 0.0\n")
+                    f.write(f"POLYGONS 1 {len(f_lmks_i) + 1}\n")
+                    f.write(f"{len(f_lmks_i)} ")
+                    f.write(" ".join(str(j) for j in range(len(f_lmks_i))))
+
+                if wallnodes and not landmarks:
+                    f_lmks_i = f_lmks_i[f_lmks_i["type"] == "w_node"]
+                    print(f_lmks_i)
+                    print(f_lmks_i[["x_mm", "y_mm"]].values.tolist())
+                    print(list(range(len(f_lmks_i))))
+                    # v = [(row["x_mm"], row["y_mm"], 0)
+                    #      for _, row in f_lmks_i.iterrows()]
+                    # faces = [list(range(len(v)))]
+                    # mesh = Mesh([v, faces])
+                    # mesh.triangulate()  # triangulate for yalla compatability
+                    f.write(f"POINTS {len(f_lmks_i)} float\n")
+                    for _, row in f_lmks_i.iterrows():
+                        f.write(f"{row['x_mm']} {row['y_mm']} 0.0\n")
+                    # f.write(f"VERTICES {len(f_lmks_i)} {len(f_lmks_i)*2}\n")
+                    # for j in range(len(f_lmks_i)):
+                    #     f.write(f"1 {j}\n")
+                    f.write(f"POINT_DATA {len(f_lmks_i)}\n")
+                    f.write("NORMALS polarity float\n")
+                    for _, row in f_lmks_i.iterrows():
+                        f.write(f"{row['x_pol']} {row['y_pol']} 0.0\n")
+                    # f.write(
+                    #     f"POLYGONS {len(mesh.cells)} {len(mesh.cells) + len(mesh.vertices)}\n")
+                    # for face in mesh.cells:
+                    #     f.write(f"{len(face)} ")
+                    #     f.write(" ".join(str(v) for v in face))
+                    #     f.write("\n")
+
+            print(f"VTK saved to {vtk_path}")
 
 
 def load_landmark_vtks(dir_path):
@@ -292,37 +339,67 @@ def visualise_landmark_vtks(dir_path):
 
     meshes = load_landmark_vtks(dir_path)
     # meshes_trans = transform_landmarks(vtk_files, t=True, r=True)
+    suffix = ""
 
     # Determine global x and y limits
+    pad = 0.3  # Add padding to limits
     all_x = []
     all_y = []
     for mesh in meshes:
         all_x.extend(mesh.vertices[:, 0])
         all_y.extend(mesh.vertices[:, 1])
 
-    x_min, x_max = min(all_x), max(all_x)
-    y_min, y_max = min(all_y), max(all_y)
+    x_min, x_max = min(all_x) - pad, max(all_x) + pad
+    y_min, y_max = min(all_y) - pad, max(all_y) + pad
 
     fig, axs = plt.subplots(figsize=(16, 8), nrows=3, ncols=4,
                             # sharex=True, sharey=True,
                             layout="constrained")
     for mesh, ax in zip(meshes, axs.flatten()):
+        if "polarity" in mesh.pointdata.keys():  # if mesh contains wall nodes
+            pdata = pd.DataFrame(
+                {"x": mesh.vertices[:, 0],  # get plot data
+                 "y": mesh.vertices[:, 1],
+                 "polarity_x": mesh.pointdata["polarity"][:, 0],
+                 "polarity_y": mesh.pointdata["polarity"][:, 1]})
+            pdata["type"] = ((pdata["polarity_x"] == 0) &
+                             (pdata["polarity_y"] == 0)).map(
+                {True: "lmk", False: "wnode"})
+            suffix += "_wnodes"
+        else:
+            pdata = pd.DataFrame({"x": mesh.vertices[:, 0],
+                                  "y": mesh.vertices[:, 1],
+                                 "type": "lmk"})
 
-        x = mesh.vertices[:, 0]
-        y = mesh.vertices[:, 1]
-        ax.scatter(x, y, c='C0')
-        # Connect all points in order, including last to first
-        x_closed = list(x) + [x[0]]
-        y_closed = list(y) + [y[0]]
-        ax.plot(x_closed, y_closed, color='C0', linewidth=1)
-        for i, point in enumerate(mesh.vertices):
-            ax.text(point[0], point[1], str(i), fontsize=9, color='red')
+        # Plot landmarks
+        lmks = pdata[pdata["type"] == "lmk"]
+        if not lmks.empty:
+            ax.scatter(lmks["x"], lmks["y"], color='C0')
+            x = lmks["x"].values
+            y = lmks["y"].values
+            # Connect all points in order, including last to first
+            x_closed = list(x) + [x[0]]
+            y_closed = list(y) + [y[0]]
+            ax.plot(x_closed, y_closed, color='C0', linewidth=1)
+            for i, row in lmks.iterrows():
+                ax.text(row["x"], row["y"], str(i), fontsize=9, color='red')
+            suffix += "_lmks"
+
+        if "polarity" in mesh.pointdata.keys():
+            # Draw wall normal vectors
+            w_pts = pdata[pdata["type"] == "wnode"]
+            ax.scatter(w_pts["x"], w_pts["y"], color='black')
+            ax.quiver(w_pts["x"], w_pts["y"], w_pts["polarity_x"],
+                      # scale_units='xy',
+                      w_pts["polarity_y"], color='black', angles='xy',
+                      scale=5, width=0.003, alpha=0.7)
+
         ax.set_title(f"{os.path.basename(mesh.filename)}")
         ax.grid(alpha=0.3)
         ax.set_aspect("equal")
         ax.set_xlim(x_min, x_max)
         ax.set_ylim(y_min, y_max)
-        ax.invert_yaxis()
+        # ax.invert_yaxis()
 
     fig.supxlabel('X (mm)')
     fig.supylabel('Y (mm)')
@@ -330,10 +407,11 @@ def visualise_landmark_vtks(dir_path):
     for ax in axs.flatten()[len(meshes):]:
         ax.axis("off")  # switch off unused subplots
 
+    plt.savefig(f"{dir_path}_{suffix}.png", dpi=600)
     plt.show()
 
 
-def transform_landmarks(lmks, t=True, r=True):
+def transform_landmarks(lmks, tl=False, rot=False, ref=True):
     """Transform landmark lmks to standard orientation and position.
     Applies a translation and rotation based on the first two edge
     landmarks (posterior and anterior proximal corners of the fin).
@@ -341,8 +419,9 @@ def transform_landmarks(lmks, t=True, r=True):
     Args:
         lmks (pd.DataFrame): DataFrame containing landmark data for
             a single fish image.
-        t (bool): Whether to apply translation.
-        r (bool): Whether to apply rotation.
+        tl (bool): Whether to apply translation.
+        rot (bool): Whether to apply rotation.
+        ref (bool): Whether to reflect in the x-axis.
     Returns:
         pd.DataFrame: Transformed landmark DataFrame.
     """
@@ -351,13 +430,13 @@ def transform_landmarks(lmks, t=True, r=True):
     # Get anterior and posterior edge points, assume order post, ant
     p, a = lmks[lmks["type"] == "e"][["x", "y"]].values
 
-    if t:
+    if tl:
         lmks.loc[:, "x"] = lmks["x"] - a[0]
         lmks.loc[:, "y"] = lmks["y"] - a[1]
 
         p, a = lmks[lmks["type"] == "e"][["x", "y"]].values
 
-    if r:
+    if rot:
         ap = p - a  # vector from anterior to posterior edge point
         angle_rad = -(np.arctan2(ap[1], ap[0]))
         cos_angle = np.cos(angle_rad)
@@ -372,7 +451,40 @@ def transform_landmarks(lmks, t=True, r=True):
             lambda row: rotate_point(row["x"], row["y"]),
             axis=1, result_type='expand')
 
+    if ref:
+        lmks.loc[:, "y"] = -lmks["y"]
+
     return lmks
+
+
+def get_wallnorms(lmks):
+    """Compute midpoint of mesh line segements and associated
+    normal vector facing away from the mesh interior.
+    Args:
+        lmks (pd.DataFrame): DataFrame containing landmark data for
+            a single fish image.
+    Returns:
+        lmks_norm (pd.DataFrame): DataFrame with additional rows for
+            wall midpoints and normal vectors.
+    """
+    wall_norms = []
+    for i in range(len(lmks)):
+        p1 = lmks.iloc[i][["x_mm", "y_mm"]].values
+        if i == len(lmks) - 1:  # we wrap around to the first point
+            p2 = lmks.iloc[0][["x_mm", "y_mm"]].values
+        else:
+            p2 = lmks.iloc[i + 1][["x_mm", "y_mm"]].values
+        mpt = (p1 + p2) / 2
+        norm = np.array([(p2[1] - p1[1]), -1*(p2[0] - p1[0])])
+        norm /= np.linalg.norm(norm)  # Normalize the normal vector
+        wall_norms.append({"x_mm": mpt[0], "y_mm": mpt[1],
+                           "x_pol": norm[0], "y_pol": norm[1],
+                           "type": "w_node"})
+    wall_norms = pd.DataFrame(wall_norms)
+    lmks_norm = pd.concat([lmks, wall_norms], axis=0, ignore_index=True)
+    lmks_norm[["x_pol", "y_pol"]] = lmks_norm[["x_pol", "y_pol"]].fillna(0.0)
+
+    return lmks_norm
 
 
 if __name__ == "__main__":
@@ -384,5 +496,6 @@ if __name__ == "__main__":
     # lm = Landmarker("adult_benthic_all_images")
     # lm.run()
 
-    landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv")
+    landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv",
+                     wallnodes=False, landmarks=True)
     visualise_landmark_vtks("lmk_DA-1-10_12-09-25")
