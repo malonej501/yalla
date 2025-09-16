@@ -116,6 +116,36 @@ __device__ bool test_exclusion(const Mesh_d& mesh, const Pt d_X)
     return (n_intersections % 2 == 0);
 }
 
+template<typename Pt>
+__device__ float3 closest_point_on_triangle(const Pt d_X, const Triangle_d& tri)
+{
+    float3 p = make_float3(d_X.x, d_X.y, d_X.z);
+    // Compute vectors
+    float3 ab = tri.V1 - tri.V0;
+    float3 ac = tri.V2 - tri.V0;
+    float3 ap = p - tri.V0;
+
+    // Compute barycentric coordinates
+    float d1 = dot_product(ab, ap);
+    float d2 = dot_product(ac, ap);
+    float d3 = dot_product(ab, ab);
+    float d4 = dot_product(ab, ac);
+    float d5 = dot_product(ac, ac);
+
+    float denom = d3 * d5 - d4 * d4;
+    float v = (d5 * d1 - d4 * d2) / denom;
+    float w = (d3 * d2 - d4 * d1) / denom;
+    float u = 1.0f - v - w;
+
+    // Clamp barycentric coordinates to triangle
+    u = fmaxf(0.0f, fminf(1.0f, u));
+    v = fmaxf(0.0f, fminf(1.0f, v));
+    w = fmaxf(0.0f, fminf(1.0f, w));
+
+    // Compute closest point
+    return tri.V0 * u + tri.V1 * v + tri.V2 * w;
+}
+
 std::vector<Triangle_d> read_facets_from_vtk(const std::string& filename)
 {
     std::vector<Triangle_d> facets;
