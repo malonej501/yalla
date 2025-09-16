@@ -15,6 +15,7 @@
 #include <iterator>
 #include <regex>
 
+#include "../include/dmesh.cuh"
 #include "../include/dtypes.cuh"
 #include "../include/inits.cuh"
 #include "../include/mesh.cuh"
@@ -384,7 +385,7 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
 }
 
 __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
-    Po_cell* d_wall_nodes, int n_wall_nodes)
+    Po_cell* d_wall_nodes, int n_wall_nodes, Mesh_d wall_mesh)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
@@ -408,8 +409,17 @@ __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
             closest_nm = nm;
         }
     }
+    // // Determine if cell outside fin using ray-casting
+    // float3 ray_start = {-1.0, 1.0, 0.0};  // point outside fin mesh
+    // float3 ray_end = {d_X[i].x, d_X[i].y, 0.0};
 
-    if (min_displ < 0) {                    // only if penetrating wall
+    // bool outside = wall_mesh.test_exclusion(d_X[i]);  // true if outside
+    bool inside = test_exclusion(wall_mesh, d_X[i]);
+    // printf("Cell %d: min_displ = %f, inside = %d\n", i, min_displ, inside);
+    // printf("in%d\n", inside);
+
+    // if (min_displ < 0 && !inside) {  // only if outside and penetrating wall
+    if (inside) {
         auto F_mag = fmaxf(-min_displ, 0);  // force magnitude
         d_dX[i].x +=
             closest_nm.x * F_mag;  // force is product of displ and norm vec
@@ -418,7 +428,7 @@ __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
 }
 
 // __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
-//     Po_cell* d_wall_nodes, int n_wall_nodes)
+//     Po_cell* d_wall_nodes, int n_wall_nodes, Mesh_d wall_mesh)
 // {
 //     int i = blockIdx.x * blockDim.x + threadIdx.x;
 //     if (i >= n_cells) return;
@@ -445,7 +455,10 @@ __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
 //         nm.y *= -1;
 //         float displ = (r.x * nm.x) + (r.y * nm.y) + (r.z * nm.z);
 
-//         if (displ < 0) {  // Only if cell is outside (penetrating) the wall
+//         bool inside = test_exclusion(wall_mesh, d_X[i]);
+
+//         if (displ < 0 &&
+//             !inside) {  // Only if cell is outside (penetrating) the wall
 //             auto F_mag = -displ;
 //             d_dX[i].x += nm.x * F_mag;
 //             d_dX[i].y += nm.y * F_mag;
@@ -459,6 +472,7 @@ void update_wall_nodes_from_vtk(
     Vtk_input input{filename};
     input.read_positions(wall_nodes);
     input.read_polarity(wall_nodes);
+    // Mesh wall_mesh{filename};
     *wall_nodes.h_n = input.n_points;
     wall_nodes.copy_to_device();
 }
@@ -592,6 +606,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     }
     if (h_pm.tmode == 5) {  // fin with spot aggregation at top
         Mesh tis{"../inits/shape3_mesh_3D.vtk"};
+        // Mesh tis{"../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk"};
         tis.rescale(h_pm.tis_s);
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
@@ -659,12 +674,32 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     Vtk_input input{wall_files[0]};    // read in first wall file
     input.read_positions(wall_nodes);  // read in wall nodes from a file
     input.read_polarity(wall_nodes);   // read in wall node polarity
-    *wall_nodes.h_n =
-        input.n_points;  // set the number of wall nodes to read in
+    *wall_nodes.h_n = input.n_points;
+    // Mesh_d wall_mesh{
+    //     "../inits/shape3_mesh_3D.vtk"};  // for testing if cells are outside
+    // fin
+    // wall_mesh.copy_to_device();
 
-    // Copy the ray data to the device
-    cudaMemcpy(
-        d_rays, &rays, h_pm.n_rays * 2 * sizeof(float), cudaMemcpyHostToDevice);
+    std::vector<Triangle_d> host_facets =
+        read_facets_from_vtk("../inits/shape3_mesh_3D.vtk");
+    for (const auto& facet : host_facets) {
+        std::cout << "Facet vertices: (" << facet.V0.x << ", " << facet.V0.y
+                  << ", " << facet.V0.z << "), (" << facet.V1.x << ", "
+                  << facet.V1.y << ", " << facet.V1.z << "), (" << facet.V2.x
+                  << ", " << facet.V2.y << ", " << facet.V2.z << ")\n";
+    }
+
+    printf("Number of facets read: %zu\n", host_facets.size());
+
+
+    Triangle_d* d_facets;
+    cudaMalloc(&d_facets, host_facets.size() * sizeof(Triangle_d));
+    cudaMemcpy(d_facets, host_facets.data(),
+        host_facets.size() * sizeof(Triangle_d), cudaMemcpyHostToDevice);
+
+    Mesh_d mesh_d;
+    mesh_d.d_facets = d_facets;
+    mesh_d.n_facets = host_facets.size();
 
     int time_step;  // declare  outside main loop for access in gen_func
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
@@ -689,7 +724,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             //     h_pm.w_off_s);  //, num_walls, wall_normals,
             // wall_offsets);
             wall_forces_new<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                cells.get_d_n(), d_X, d_dX, wall_nodes.d_X, *wall_nodes.h_n);
+                cells.get_d_n(), d_X, d_dX, wall_nodes.d_X, *wall_nodes.h_n,
+                mesh_d);
     };
 
     cells.copy_to_device();
@@ -739,7 +775,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
         if (time_step > 0 && time_step % 100 == 0) {
-            std::string vtk_filename = wall_files[int(time_step / 100)];
+            // std::string vtk_filename = wall_files[int(time_step / 100)];
+            std::string vtk_filename = wall_files[0];
             std::cout << "Updating wall nodes from: " << vtk_filename
                       << std::endl;
             update_wall_nodes_from_vtk(vtk_filename, wall_nodes);
