@@ -390,42 +390,58 @@ __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
-    float min_displ = 1e6;  // Initialize to a large value
-    float3 closest_nm = {0, 0, 0};
-    for (int j = 0; j < n_wall_nodes; j++) {
-        float3 r;  // vector from cell to wall node
-        r.x = d_X[i].x - d_wall_nodes[j].x;
-        r.y = d_X[i].y - d_wall_nodes[j].y;
-        r.z = 0;
-        // retrieve unit normal vector of wall node
-        float3 nm = pol_to_float3(d_wall_nodes[j]);
-        nm.x *= -1;
-        nm.y *= -1;
-        // calculate displacement of cell to the wall dot product
-        float displ = (r.x * nm.x) + (r.y * nm.y) + (r.z * nm.z);
+    // float min_displ = 1e6;  // Initialize to a large value
+    // float3 closest_nm = {0, 0, 0};
+    // for (int j = 0; j < n_wall_nodes; j++) {
+    //     float3 r;  // vector from cell to wall node
+    //     r.x = d_X[i].x - d_wall_nodes[j].x;
+    //     r.y = d_X[i].y - d_wall_nodes[j].y;
+    //     r.z = 0;
+    //     // retrieve unit normal vector of wall node
+    //     float3 nm = pol_to_float3(d_wall_nodes[j]);
+    //     nm.x *= -1;
+    //     nm.y *= -1;
+    //     // calculate displacement of cell to the wall dot product
+    //     float displ = (r.x * nm.x) + (r.y * nm.y) + (r.z * nm.z);
 
-        if (displ < min_displ) {
-            min_displ = displ;
-            closest_nm = nm;
+    //     if (displ < min_displ) {
+    //         min_displ = displ;
+    //         closest_nm = nm;
+    //     }
+    // }
+
+    float min_dist2 = 1e30f;
+    float3 closest_nm;
+    for (int j = 0; j < wall_mesh.n_facets; ++j) {
+        float3 pt = closest_point_on_triangle(d_X[i], wall_mesh.d_facets[j]);
+        float dx = d_X[i].x - pt.x;
+        float dy = d_X[i].y - pt.y;
+        float dz = d_X[i].z - pt.z;
+        float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 < min_dist2) {
+            min_dist2 = dist2;
+            closest_nm = wall_mesh.d_facets[j].n;
+            // Optionally, store the triangle normal as well
         }
     }
+
     // // Determine if cell outside fin using ray-casting
-    // float3 ray_start = {-1.0, 1.0, 0.0};  // point outside fin mesh
-    // float3 ray_end = {d_X[i].x, d_X[i].y, 0.0};
-
-    // bool outside = wall_mesh.test_exclusion(d_X[i]);  // true if outside
-    bool inside = test_exclusion(wall_mesh, d_X[i]);
-    // printf("Cell %d: min_displ = %f, inside = %d\n", i, min_displ, inside);
-    // printf("in%d\n", inside);
-
-    // if (min_displ < 0 && !inside) {  // only if outside and penetrating wall
-    if (inside) {
-        auto F_mag = fmaxf(-min_displ, 0);  // force magnitude
+    // bool outside = test_exclusion(wall_mesh, d_X[i]);
+    // if (outside) {
+    //     auto F_mag = fmaxf(-min_dist2, 0);  // force magnitude
+    //     d_dX[i].x +=
+    //         closest_nm.x * F_mag;  // force is product of displ and norm vec
+    //     d_dX[i].y += closest_nm.y * F_mag;
+    // }
+    bool outside = test_exclusion(wall_mesh, d_X[i]);
+    if (outside) {
+        auto F_mag = sqrtf(min_dist2) * 5;  // force magnitude
         d_dX[i].x +=
             closest_nm.x * F_mag;  // force is product of displ and norm vec
         d_dX[i].y += closest_nm.y * F_mag;
     }
 }
+
 
 // __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
 //     Po_cell* d_wall_nodes, int n_wall_nodes, Mesh_d wall_mesh)
@@ -455,10 +471,9 @@ __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
 //         nm.y *= -1;
 //         float displ = (r.x * nm.x) + (r.y * nm.y) + (r.z * nm.z);
 
-//         bool inside = test_exclusion(wall_mesh, d_X[i]);
+//         bool outside = test_exclusion(wall_mesh, d_X[i]);
 
-//         if (displ < 0 &&
-//             !inside) {  // Only if cell is outside (penetrating) the wall
+//         if (outside) {  // Only if cell is outside (penetrating) the wall
 //             auto F_mag = -displ;
 //             d_dX[i].x += nm.x * F_mag;
 //             d_dX[i].y += nm.y * F_mag;
