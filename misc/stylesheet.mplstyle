@@ -1,0 +1,18 @@
+# font
+pgf.texsystem: pdflatex
+font.size: 9
+font.family: serif
+text.usetex: True
+pgf.rcfonts: False
+text.latex.preamble: \usepgfplotslibrary{external}\tikzexternalize
+
+# figsize
+figure.figsize: 3.3, 3.0
+figure.dpi: 600 # relevant for rasterized components
+
+# layout
+figure.constrained_layout.use: True
+figure.constrained_layout.h_pad: 0.005
+figure.constrained_layout.w_pad: 0.005
+figure.constrained_layout.hspace: 0.005
+figure.constrained_layout.wspace: 0.005

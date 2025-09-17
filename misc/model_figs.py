@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 import sympy as sp
+import matplotlib
 import matplotlib.pyplot as plt
+
+matplotlib.use("pgf")
+plt.style.use("../misc/stylesheet.mplstyle")
+
 
 PLOT = 0  # 0: single force, 1: force for all cells, 2: forces and potentials
 INT_TYPE = 1  # 0: attraction, 1: pure repulsion
@@ -84,7 +89,7 @@ def plot_force_equation():
     }) for d_val in d_vals]
 
     # Plotting
-    fig, ax = plt.subplots(figsize=(4, 3))
+    fig, ax = plt.subplots(figsize=(2.7, 2.5))
     for itype in [0, 1]:
         r_max_val, A_val, a_val, R_val, r_val = get_params(itype)
         f_vals = [force_equation().subs({
@@ -93,8 +98,8 @@ def plot_force_equation():
         plt.plot(d_vals, f_vals, label=ints[itype], color=f"C{itype}")
     plt.ylim(-0.05, 0.005)
     plt.legend(title="Interaction", loc="lower right")
-    plt.xlabel("Separation distance ($mm$)")
-    plt.ylabel("Force ($mm t^{-1}$)")
+    plt.xlabel("Separation distance (mm)")
+    plt.ylabel("Force (mm$t^{-1}$)")
     plt.grid(alpha=0.3)
     plt.title("")
     # if INT_TYPE == 1:
@@ -104,7 +109,7 @@ def plot_force_equation():
 
     plt.tight_layout()
     if EXPORT:
-        plt.savefig('force_equation.svg', bbox_inches='tight')
+        plt.savefig('force_equation_tex.pdf')
     plt.show()
 
 

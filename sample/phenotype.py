@@ -9,11 +9,15 @@ import alphashape
 import shapely
 from pyvirtualdisplay import Display
 import h5py
+import matplotlib
 import matplotlib.pyplot as plt
 from skimage.measure import regionprops, label
 from skimage.color import label2rgb
 from scipy.spatial import Delaunay, ConvexHull
 from PIL import Image
+
+matplotlib.use("pgf")
+plt.style.use("../misc/stylesheet.mplstyle")
 
 
 class Frame():
@@ -396,7 +400,7 @@ def plot_sim_tseries_mtpl(run_id, n_frames):
     print(frames)
     ctypes = {1: "Spot-migratory", 2: "Non-spot", 3: "Spot-static"}
 
-    fig, axs = plt.subplots(2, 3, figsize=(8, 4),
+    fig, axs = plt.subplots(2, 3, figsize=(6, 3),
                             layout="constrained")
     axs = axs.flatten()
 
@@ -414,7 +418,8 @@ def plot_sim_tseries_mtpl(run_id, n_frames):
             axs[i].scatter(fr_dat["x"][mask], fr_dat["y"][mask], s=1,
                            label=ctypes[ctype], c=plt.cm.viridis(
                                (ctype - cell_types.min()) /
-                               (cell_types.max() - cell_types.min())))
+                               (cell_types.max() - cell_types.min())),
+                           rasterized=True)  # rasterize for large data
         axs[i].set_aspect("equal")
         axs[i].set_title(fr"$t={fr*10}$")
         axs[i].set_xticks([])
@@ -437,7 +442,8 @@ def plot_sim_tseries_mtpl(run_id, n_frames):
 if __name__ == "__main__":
     # analyse_realfins()
     # plot_sim_tseries_vedo("../run/saves/li_adv_new_lenscales_01-06-25", 6)
-    plot_sim_tseries_mtpl("../run/saves/li_adv_new_lenscales_01-06-25", 6)
+    # plot_sim_tseries_mtpl("../run/saves/li_adv_new_lenscales_01-06-25", 6)
+    # plot_sim_tseries_mtpl("../run/saves/wall_penetrating_tseries_15-09-25", 6)
     # plot_segmented_fins()
     # compare_segmented_real(export=True, mode=1)
     # Realfin(path="../data/1_13-10-22_Simple Segmentation.h5").mesh(True)
