@@ -1,10 +1,10 @@
 import sys
 from vedo import *
 
-DISPLAY = False
-EXTRUDE = False
+DISPLAY = True
+EXTRUDE = True
 FORMAT = 0  # 0: legacy vtk yalla compatible, 1: new vtk (from vedo)
-SHAPE = 2  # 0: 2D fin shape, 1: 2D rectangular shape,
+SHAPE = 3  # 0: 2D fin shape, 1: 2D rectangular shape, 3: 3D microscopy fin
 EXTRUDE_Z = 0.1  # extrude distance in z direction
 
 # 2: 2D rect with specific dimensions
@@ -34,17 +34,17 @@ def get_shape():
         verts = [(-ap/2, pd/2, 0), (ap/2, pd/2, 0),
                  (ap/2, -pd/2, 0), (-ap/2, -pd/2, 0)]
         faces = [[0, 1, 2, 3]]
-    
+
     if SHAPE == 3:
         ap = 7.5  # anterior-posterior length mm
         pd = 2.5  # proximal-distal height mm
-        verts = [(0, pd/2, 0), # top
-                 (0, -pd/2, 0), # bottom
-                 (-ap/2, 0, 0), # left
-                 (ap/2, 0, 0)] # right
+        verts = [(0, pd/2, 0),  # top
+                 (0, -pd/2, 0),  # bottom
+                 (-ap/2, 0, 0),  # left
+                 (ap/2, 0, 0)]  # right
         norms = [(0, 1, 0),
                  (0, -1, 0),
-                 (-1, 0, 0), 
+                 (-1, 0, 0),
                  (1, 0, 0)]
         faces = [[0, 1, 2, 3, 4, 5, 6, 7]]
     return verts, faces, norms
@@ -110,6 +110,17 @@ def extrude_mesh(verts):
     return verts_3d, faces_3d
 
 
+def import_lmks(filename):
+    """Import landmark points from a CSV file."""
+    vtk = load("../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk")
+
+    v = vtk.vertices
+    f = vtk.cells
+    n = vtk.pointdata["polarity"]
+
+    return v, f, n
+
+
 if __name__ == "__main__":
 
     # collect bash arguments
@@ -122,7 +133,9 @@ if __name__ == "__main__":
     print(f"FORMAT: {FORMAT}")
     print(f"SHAPE: {SHAPE}")
 
-    v, f, n = get_shape()  # get the shape vertices, faces and polarities
+    # v, f, n = get_shape()  # get the shape vertices, faces and polarities
+    v, f, n = import_lmks(
+        "../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk")
 
     if EXTRUDE:
         v, f = extrude_mesh(v)  # extrude in z-direction
