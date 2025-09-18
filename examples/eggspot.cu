@@ -601,43 +601,21 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     }
 
     // Initialise the wall nodes from file
-    std::vector<std::string> wall_files;
-    for (const auto& entry :  // collect all wall file names
-        std::filesystem::directory_iterator("../data/lmk_DA-1-10_12-09-25/")) {
-        if (entry.path().extension() != ".vtk") continue;
-        wall_files.push_back(entry.path().string());
-    }
-    std::sort(wall_files.begin(), wall_files.end(),  // sort by stage number
-        [](const std::string& a, const std::string& b) {
-            return extract_number(a) < extract_number(b);
-        });
-    for (const auto& file : wall_files)
-        std::cout << "Wall file: " << file << std::endl;
-
-    // Vtk_input input{"../inits/shape3_mesh_2D.vtk"};
-
-    // std::vector<Triangle_d> host_facets =
-    //     read_facets_from_vtk("../inits/shape3_mesh_3D.vtk");
-    // for (const auto& facet : host_facets) {
-    //     std::cout << "Facet vertices: (" << facet.V0.x << ", " << facet.V0.y
-    //               << ", " << facet.V0.z << "), (" << facet.V1.x << ", "
-    //               << facet.V1.y << ", " << facet.V1.z << "), (" << facet.V2.x
-    //               << ", " << facet.V2.y << ", " << facet.V2.z << ")\n";
+    // std::vector<std::string> wall_files;
+    // for (const auto& entry :  // collect all wall file names
+    //     std::filesystem::directory_iterator("../data/lmk_DA-1-10_12-09-25/"))
+    //     { if (entry.path().extension() != ".vtk") continue;
+    //     wall_files.push_back(entry.path().string());
     // }
+    // std::sort(wall_files.begin(), wall_files.end(),  // sort by stage number
+    //     [](const std::string& a, const std::string& b) {
+    //         return extract_number(a) < extract_number(b);
+    //     });
+    // for (const auto& file : wall_files)
+    //     std::cout << "Wall file: " << file << std::endl;
 
-
-    // printf("Number of facets read: %zu\n", host_facets.size());
-
-
-    // Triangle_d* d_facets;
-    // cudaMalloc(&d_facets, host_facets.size() * sizeof(Triangle_d));
-    // cudaMemcpy(d_facets, host_facets.data(),
-    //     host_facets.size() * sizeof(Triangle_d), cudaMemcpyHostToDevice);
-
-    Fin fin("../inits/fin_init.vtk");
-    // mesh_d.d_facets = d_facets;
-    // mesh_d.n_facets = host_facets.size();
-    // Fin fin("../inits/fin_init.vtk");
+    Fin fin("../inits/fin_init.vtk",
+        "fin_" + std::to_string(walk_id) + "_" + std::to_string(step));
 
     int time_step;  // declare  outside main loop for access in gen_func
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
@@ -673,8 +651,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     Vtk_output output{
         "out_" + std::to_string(walk_id) + "_" + std::to_string(step)};
     // create instance of Vtk_output class
-    Vtk_output wall_output{
-        "out_wall_" + std::to_string(walk_id) + "_" + std::to_string(step)};
+    // Vtk_output wall_output{
+    //     "out_wall_" + std::to_string(walk_id) + "_" + std::to_string(step)};
 
 
     /* the neighbours are initialised with 0. However, you want to use them
@@ -703,11 +681,16 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     output.write_field(cells, "u", &Cell::u);  // write u of each cell to vtk
     output.write_field(cells, "v", &Cell::v);
 
+    fin.write_vtk();
+
 
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
-        if (time_step > 0 && time_step % 100 == 0) {
+        if (time_step > 0 && time_step % 10 == 0) {
             // std::string vtk_filename = wall_files[int(time_step / 100)];
+            fin.grow(1.01);  // grow the fin by 10% every 100 time steps
+            grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                cells.get_d_n(), cells.d_X, 1.01);
         }
         for (float T = 0.0; T < 1.0; T += h_pm.dt) {
             generate_noise<<<(cells.get_d_n() + 32 - 1) / 32, 32>>>(
@@ -741,6 +724,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             output.write_property(in_ray);
             output.write_field(cells, "u", &Cell::u);
             output.write_field(cells, "v", &Cell::v);
+            fin.write_vtk();
         }
     }
     return 0;

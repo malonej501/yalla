@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include "dtypes.cuh"
@@ -220,18 +221,22 @@ public:
     std::vector<Triangle_d> h_facets;
     Mesh_d mesh;
     int n_facets;
-    Fin(std::string file_name);
+    Fin(std::string file_name, std::string out_name);
     void grow(float amount);
+    void write_vtk();
+    std::string out_name;
+    int time_step = 0;
 };
 
-Fin::Fin(std::string file_name)
+Fin::Fin(std::string file_name, std::string out_name)
 {
     h_facets = read_facets_from_vtk(file_name);
     n_facets = h_facets.size();
-    cudaMalloc(&mesh.d_facets, n_facets * sizeof(Triangle_d));
     mesh.n_facets = n_facets;
+    cudaMalloc(&mesh.d_facets, n_facets * sizeof(Triangle_d));
     cudaMemcpy(mesh.d_facets, h_facets.data(), n_facets * sizeof(Triangle_d),
         cudaMemcpyHostToDevice);
+    this->out_name = out_name;
 }
 
 void Fin::grow(float amount)
@@ -250,4 +255,39 @@ void Fin::grow(float amount)
     }
     cudaMemcpy(mesh.d_facets, h_facets.data(), n_facets * sizeof(Triangle_d),
         cudaMemcpyHostToDevice);
+}
+
+template<typename Pt>
+__global__ void grow_cells(int n_cells, Pt* d_X, float amount)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n_cells) return;
+
+    d_X[i].x *= amount;
+    d_X[i].y *= amount;
+    // z remains unchanged
+}
+
+
+void Fin::write_vtk()
+{
+    std::string current_path =
+        "output/" + out_name + "_" + std::to_string(time_step) + ".vtk";
+    std::ofstream file(current_path);
+    file << "# vtk DataFile Version 3.0\n";
+    file << "Fin mesh\n";
+    file << "ASCII\n";
+    file << "DATASET POLYDATA\n";
+    file << "POINTS " << n_facets * 3 << " float\n";
+    for (const auto& tri : h_facets) {
+        file << tri.V0.x << " " << tri.V0.y << " " << tri.V0.z << "\n";
+        file << tri.V1.x << " " << tri.V1.y << " " << tri.V1.z << "\n";
+        file << tri.V2.x << " " << tri.V2.y << " " << tri.V2.z << "\n";
+    }
+    file << "POLYGONS " << n_facets << " " << n_facets * 4 << "\n";
+    for (int i = 0; i < n_facets; ++i) {
+        file << "3 " << i * 3 << " " << i * 3 + 1 << " " << i * 3 + 2 << "\n";
+    }
+    file.close();
+    time_step++;
 }
