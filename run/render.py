@@ -23,6 +23,7 @@ PT_SIZE = 12  # how large the cells are drawn
 ANIMATE = 2  # 0 = False, 1 = Matplotlib, 2 = Vedo
 SHOW_AX = True  # show axes
 WALLS = True  # render walls if present
+FIN = True  # render fin mesh if present
 FOLDER_PATH = "../run/saves/test"  # default output folder
 VTKS = None  # list of vtk files
 WALK_ID = 0  # defualt if only one tissue simulation
@@ -49,7 +50,7 @@ def render_frame():
     display.stop()
 
 
-def render_movie(walls=False):
+def render_movie(walls=False, fin=False):
     """Renders movie of growing tissue with one cell property colourised
     e.g. cell_type, u, mech_str"""
 
@@ -77,9 +78,13 @@ def render_movie(walls=False):
 
         pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
         wpts = Points([])  # empty points object
+        fmesh = None  # empty mesh object
         if walls:
             wpts = Points(W_VTKS[i]).point_size(PT_SIZE * ZOOM).color("black")
         wnrms = Glyph(wpts, Arrow().scale(0.5), "normals", c="blue")
+        if fin:
+            fmesh = Mesh(F_VTKS[i]).alpha(
+                0.1).linecolor("blue")  # .wireframe()
 
         # lims = ((pts.bounds()[0],pts.bounds()[1]),
         # (pts.bounds()[2],pts.bounds()[3]))
@@ -103,13 +108,15 @@ def render_movie(walls=False):
         pts.name = "cells"
         wpts.name = "wall_nodes"
         wnrms.name = "wall_normals"
+        fmesh.name = "fin_mesh"
         br.name = "bar"
         info.name = "info"
-        frames.append((pts, wpts, wnrms, br, info))
+        frames.append((pts, wpts, wnrms, fmesh, br, info))
         # Add the mesh to the plotter
         p.remove("cells").add(pts)
         p.remove("wall_nodes").add(wpts)
         p.remove("wall_normals").add(wnrms)
+        p.remove("fin_mesh").add(fmesh)
         p.remove("info").add(info)
         p.remove("bar").add(br)
         # if i == 0:  # only add bar once to avoid flickering
@@ -124,11 +131,12 @@ def render_movie(walls=False):
 
     def slider1(widget, _):
         val = widget.value  # get the slider current value
-        pts, wpts, wnrms, br, info = frames[int(val)]
+        pts, wpts, wnrms, fmesh, br, info = frames[int(val)]
 
         p.remove("cells").add(pts)
         p.remove("wall_nodes").add(wpts)
         p.remove("wall_normals").add(wnrms)
+        p.remove("fin_mesh").add(fmesh)
         p.remove("bar").add(br)
         p.remove("info").add(info)
 
@@ -141,7 +149,8 @@ def render_movie(walls=False):
         if val == slider2.prev_val:  # only update if int val has changed
             return
         slider2.prev_val = val
-        pts, wpts, wnrms, br, info = frames[int(val)]  # get current frame
+        # get current frame
+        pts, wpts, wnrms, fmesh, br, info = frames[int(val)]
         c_prop_local = pts.pointdata.keys()[val]  # return new cmap from slider
 
         # change the cmap for and bar to the current frame
@@ -152,10 +161,10 @@ def render_movie(walls=False):
         p.render()
 
         # change the cmap for and add bar to all frames
-        for k, (pts, wpts, wnrms, b, info) in enumerate(frames):
+        for k, (pts, wpts, wnrms, fmesh, br, info) in enumerate(frames):
             pts = pts.cmap(cmap, c_prop_local)
             b = br
-            frames[k] = (pts, wpts, wnrms, b, info)
+            frames[k] = (pts, wpts, wnrms, fmesh, br, info)
 
     p.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
     p.add_slider(slider2, 0, len(pts.pointdata.keys())-1,
@@ -604,17 +613,22 @@ def tissue_properties():
     return cell_types
 
 
-def get_cell_and_wall_vtks():
+def get_vtks():
     """Return lists of cell and wall vtk files in the output folder"""
 
-    cell = sorted((f"{FOLDER_PATH}/{i}" for i in os.listdir(
-        f"{FOLDER_PATH}") if i.endswith(".vtk") and "wall" not in i),
-        key=lambda x: int(os.path.splitext(x)[0].split("_")[-1]))
+    cell = sorted(
+        (f"{FOLDER_PATH}/{i}" for i in os.listdir(FOLDER_PATH)
+         if i.endswith(".vtk") and "wall" not in i and "fin" not in i),
+        key=lambda x: int(os.path.splitext(x)[0].split("_")[-1])
+    )
     wall = sorted((f"{FOLDER_PATH}/{i}" for i in os.listdir(
         f"{FOLDER_PATH}") if i.endswith(".vtk") and "wall" in i),
         key=lambda x: int(os.path.splitext(x)[0].split("_")[-1]))
+    fin = sorted((f"{FOLDER_PATH}/{i}" for i in os.listdir(
+        f"{FOLDER_PATH}") if i.endswith(".vtk") and "fin" in i),
+        key=lambda x: int(os.path.splitext(x)[0].split("_")[-1]))
 
-    return cell, wall
+    return cell, wall, fin
 
 
 def print_help():
@@ -667,13 +681,16 @@ if __name__ == "__main__":
         FOLDER_PATH = f'../run/{output_folder}'  # directory
 
         if FUNC == 0:
-            cell_vtks, wall_vtks = get_cell_and_wall_vtks()
+            cell_vtks, wall_vtks, fin_vtks = get_vtks()
             VTKS = load(cell_vtks)
             if WALLS and len(wall_vtks) > 0:
                 W_VTKS = load(wall_vtks)
-            render_movie(walls=True)
+            if FIN and len(fin_vtks) > 0:
+                F_VTKS = load(fin_vtks)
+            render_movie(walls=WALLS and len(wall_vtks) > 0,
+                         fin=FIN and len(fin_vtks) > 0)
         elif FUNC == 1:
-            cell_vtks, wall_vtks = get_cell_and_wall_vtks()
+            cell_vtks, wall_vtks, fin_vtks = get_vtks()
             VTKS = load(cell_vtks)
             pattern_stats()
         elif FUNC == 2:
