@@ -13,6 +13,14 @@
 struct Triangle_d {
     float3 V0, V1, V2;
     float3 n;  // normal (optional, for intersection)
+    void calculate_normal()
+    {
+        auto v = V2 - V0;
+        auto u = V1 - V0;
+        n = float3{u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z,
+            u.x * v.y - u.y * v.x};
+        n /= sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+    }
 };
 
 
@@ -111,13 +119,14 @@ __device__ bool test_exclusion(const Mesh_d& mesh, const Pt d_X)
     for (int j = 0; j < mesh.n_facets; ++j) {
         if (intersect(point, ray_end, mesh.d_facets[j])) { n_intersections++; }
     }
-    printf("ni%d\n", n_intersections);
+    // printf("ni%d\n", n_intersections);
     // Even: outside, Odd: inside
     return (n_intersections % 2 == 0);
 }
 
 template<typename Pt>
-__device__ float3 closest_point_on_triangle(const Pt d_X, const Triangle_d& tri)
+__host__ __device__ float3 closest_point_on_triangle(
+    const Pt d_X, const Triangle_d& tri)
 {
     float3 p = make_float3(d_X.x, d_X.y, d_X.z);
     // Compute vectors
@@ -199,10 +208,46 @@ std::vector<Triangle_d> read_facets_from_vtk(const std::string& filename)
             // Compute normal if needed
             float3 edge1 = tri.V1 - tri.V0;
             float3 edge2 = tri.V2 - tri.V0;
-            tri.n =
-                cross_product(edge1, edge2);  // You may want to normalize this
+            tri.calculate_normal();
             facets.push_back(tri);
         }
     }
     return facets;
+}
+
+class Fin {
+public:
+    std::vector<Triangle_d> h_facets;
+    Mesh_d mesh;
+    int n_facets;
+    Fin(std::string file_name);
+    void grow(float amount);
+};
+
+Fin::Fin(std::string file_name)
+{
+    h_facets = read_facets_from_vtk(file_name);
+    n_facets = h_facets.size();
+    cudaMalloc(&mesh.d_facets, n_facets * sizeof(Triangle_d));
+    mesh.n_facets = n_facets;
+    cudaMemcpy(mesh.d_facets, h_facets.data(), n_facets * sizeof(Triangle_d),
+        cudaMemcpyHostToDevice);
+}
+
+void Fin::grow(float amount)
+{
+    for (int i = 0; i < n_facets; ++i) {  // don't scale in z
+        h_facets[i].V0.x *= amount;
+        h_facets[i].V0.y *= amount;
+        h_facets[i].V1.x *= amount;
+        h_facets[i].V1.y *= amount;
+        h_facets[i].V2.x *= amount;
+        h_facets[i].V2.y *= amount;
+        // z remains unchanged
+        float3 edge1 = h_facets[i].V1 - h_facets[i].V0;
+        float3 edge2 = h_facets[i].V2 - h_facets[i].V0;
+        h_facets[i].calculate_normal();
+    }
+    cudaMemcpy(mesh.d_facets, h_facets.data(), n_facets * sizeof(Triangle_d),
+        cudaMemcpyHostToDevice);
 }

@@ -384,31 +384,11 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
     // if (d_cell_type[i] == 1) d_dX[i].x += 0.3;
 }
 
-__global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
-    Po_cell* d_wall_nodes, int n_wall_nodes, Mesh_d wall_mesh)
+__global__ void wall_forces_new(
+    int n_cells, const Cell* d_X, Cell* d_dX, Mesh_d wall_mesh)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
-
-    // float min_displ = 1e6;  // Initialize to a large value
-    // float3 closest_nm = {0, 0, 0};
-    // for (int j = 0; j < n_wall_nodes; j++) {
-    //     float3 r;  // vector from cell to wall node
-    //     r.x = d_X[i].x - d_wall_nodes[j].x;
-    //     r.y = d_X[i].y - d_wall_nodes[j].y;
-    //     r.z = 0;
-    //     // retrieve unit normal vector of wall node
-    //     float3 nm = pol_to_float3(d_wall_nodes[j]);
-    //     nm.x *= -1;
-    //     nm.y *= -1;
-    //     // calculate displacement of cell to the wall dot product
-    //     float displ = (r.x * nm.x) + (r.y * nm.y) + (r.z * nm.z);
-
-    //     if (displ < min_displ) {
-    //         min_displ = displ;
-    //         closest_nm = nm;
-    //     }
-    // }
 
     float min_dist2 = 1e30f;
     float3 closest_nm;
@@ -435,61 +415,11 @@ __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
     // }
     bool outside = test_exclusion(wall_mesh, d_X[i]);
     if (outside) {
-        auto F_mag = sqrtf(min_dist2) * 5;  // force magnitude
+        auto F_mag = sqrtf(min_dist2) * 20;  // force magnitude
         d_dX[i].x +=
             closest_nm.x * F_mag;  // force is product of displ and norm vec
         d_dX[i].y += closest_nm.y * F_mag;
     }
-}
-
-
-// __global__ void wall_forces_new(int n_cells, const Cell* d_X, Cell* d_dX,
-//     Po_cell* d_wall_nodes, int n_wall_nodes, Mesh_d wall_mesh)
-// {
-//     int i = blockIdx.x * blockDim.x + threadIdx.x;
-//     if (i >= n_cells) return;
-
-//     float min_dist = 1e30f;
-//     int closest_j = -1;
-//     for (int j = 0; j < n_wall_nodes; j++) {
-//         float dx = d_X[i].x - d_wall_nodes[j].x;
-//         float dy = d_X[i].y - d_wall_nodes[j].y;
-//         float dist = sqrtf(dx * dx + dy * dy);  // or include z if 3D
-//         if (dist < min_dist) {
-//             min_dist = dist;
-//             closest_j = j;
-//         }
-//     }
-
-//     if (closest_j >= 0) {
-//         float3 r;
-//         r.x = d_X[i].x - d_wall_nodes[closest_j].x;
-//         r.y = d_X[i].y - d_wall_nodes[closest_j].y;
-//         r.z = 0;
-//         float3 nm = pol_to_float3(d_wall_nodes[closest_j]);
-//         nm.x *= -1;
-//         nm.y *= -1;
-//         float displ = (r.x * nm.x) + (r.y * nm.y) + (r.z * nm.z);
-
-//         bool outside = test_exclusion(wall_mesh, d_X[i]);
-
-//         if (outside) {  // Only if cell is outside (penetrating) the wall
-//             auto F_mag = -displ;
-//             d_dX[i].x += nm.x * F_mag;
-//             d_dX[i].y += nm.y * F_mag;
-//         }
-//     }
-// }
-
-void update_wall_nodes_from_vtk(
-    const std::string& filename, Solution<Po_cell, Grid_solver>& wall_nodes)
-{
-    Vtk_input input{filename};
-    input.read_positions(wall_nodes);
-    input.read_polarity(wall_nodes);
-    // Mesh wall_mesh{filename};
-    *wall_nodes.h_n = input.n_points;
-    wall_nodes.copy_to_device();
 }
 
 int extract_number(const std::string& filename)
@@ -531,7 +461,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     // Solution<Cell, Gabriel_solver> cells{h_pm.n_max, h_pm.g_size,
     // h_pm.r_max}; args are n_max, grid_size, cube_size, gabriel_coefficient
     Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
-    Solution<Po_cell, Grid_solver> wall_nodes{h_pm.wn_max};  // for wall nodes
     // *cells.h_n = h_pm.n_0;
 
     float rays[h_pm.n_rays][2];  // initialise rays with default values
@@ -620,7 +549,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         }
     }
     if (h_pm.tmode == 5) {  // fin with spot aggregation at top
-        Mesh tis{"../inits/shape3_mesh_3D.vtk"};
+        Mesh tis{"../inits/fin_init.vtk"};
         // Mesh tis{"../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk"};
         tis.rescale(h_pm.tis_s);
         auto tis_min = tis.get_minimum();
@@ -686,35 +615,29 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         std::cout << "Wall file: " << file << std::endl;
 
     // Vtk_input input{"../inits/shape3_mesh_2D.vtk"};
-    Vtk_input input{wall_files[0]};    // read in first wall file
-    input.read_positions(wall_nodes);  // read in wall nodes from a file
-    input.read_polarity(wall_nodes);   // read in wall node polarity
-    *wall_nodes.h_n = input.n_points;
-    // Mesh_d wall_mesh{
-    //     "../inits/shape3_mesh_3D.vtk"};  // for testing if cells are outside
-    // fin
-    // wall_mesh.copy_to_device();
 
-    std::vector<Triangle_d> host_facets =
-        read_facets_from_vtk("../inits/shape3_mesh_3D.vtk");
-    for (const auto& facet : host_facets) {
-        std::cout << "Facet vertices: (" << facet.V0.x << ", " << facet.V0.y
-                  << ", " << facet.V0.z << "), (" << facet.V1.x << ", "
-                  << facet.V1.y << ", " << facet.V1.z << "), (" << facet.V2.x
-                  << ", " << facet.V2.y << ", " << facet.V2.z << ")\n";
-    }
-
-    printf("Number of facets read: %zu\n", host_facets.size());
+    // std::vector<Triangle_d> host_facets =
+    //     read_facets_from_vtk("../inits/shape3_mesh_3D.vtk");
+    // for (const auto& facet : host_facets) {
+    //     std::cout << "Facet vertices: (" << facet.V0.x << ", " << facet.V0.y
+    //               << ", " << facet.V0.z << "), (" << facet.V1.x << ", "
+    //               << facet.V1.y << ", " << facet.V1.z << "), (" << facet.V2.x
+    //               << ", " << facet.V2.y << ", " << facet.V2.z << ")\n";
+    // }
 
 
-    Triangle_d* d_facets;
-    cudaMalloc(&d_facets, host_facets.size() * sizeof(Triangle_d));
-    cudaMemcpy(d_facets, host_facets.data(),
-        host_facets.size() * sizeof(Triangle_d), cudaMemcpyHostToDevice);
+    // printf("Number of facets read: %zu\n", host_facets.size());
 
-    Mesh_d mesh_d;
-    mesh_d.d_facets = d_facets;
-    mesh_d.n_facets = host_facets.size();
+
+    // Triangle_d* d_facets;
+    // cudaMalloc(&d_facets, host_facets.size() * sizeof(Triangle_d));
+    // cudaMemcpy(d_facets, host_facets.data(),
+    //     host_facets.size() * sizeof(Triangle_d), cudaMemcpyHostToDevice);
+
+    Fin fin("../inits/fin_init.vtk");
+    // mesh_d.d_facets = d_facets;
+    // mesh_d.n_facets = host_facets.size();
+    // Fin fin("../inits/fin_init.vtk");
 
     int time_step;  // declare  outside main loop for access in gen_func
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
@@ -739,12 +662,10 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             //     h_pm.w_off_s);  //, num_walls, wall_normals,
             // wall_offsets);
             wall_forces_new<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                cells.get_d_n(), d_X, d_dX, wall_nodes.d_X, *wall_nodes.h_n,
-                mesh_d);
+                cells.get_d_n(), d_X, d_dX, fin.mesh);
     };
 
     cells.copy_to_device();
-    wall_nodes.copy_to_device();
     mech_str.copy_to_device();
     cell_type.copy_to_device();
     in_ray.copy_to_device();
@@ -771,11 +692,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
     // write out initial condition
     cells.copy_to_host();
-    // wall_nodes.copy_to_host();
     mech_str.copy_to_host();
     cell_type.copy_to_host();
     in_ray.copy_to_host();
-    wall_nodes.copy_to_host();
 
     output.write_positions(cells);
     output.write_property(mech_str);
@@ -783,18 +702,12 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     output.write_property(in_ray);
     output.write_field(cells, "u", &Cell::u);  // write u of each cell to vtk
     output.write_field(cells, "v", &Cell::v);
-    wall_output.write_positions(wall_nodes);
-    wall_output.write_polarity(wall_nodes);
 
 
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
         if (time_step > 0 && time_step % 100 == 0) {
             // std::string vtk_filename = wall_files[int(time_step / 100)];
-            std::string vtk_filename = wall_files[0];
-            std::cout << "Updating wall nodes from: " << vtk_filename
-                      << std::endl;
-            update_wall_nodes_from_vtk(vtk_filename, wall_nodes);
         }
         for (float T = 0.0; T < 1.0; T += h_pm.dt) {
             generate_noise<<<(cells.get_d_n() + 32 - 1) / 32, 32>>>(
@@ -821,7 +734,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             mech_str.copy_to_host();
             cell_type.copy_to_host();
             in_ray.copy_to_host();
-            wall_nodes.copy_to_host();
 
             output.write_positions(cells);
             output.write_property(mech_str);
@@ -829,8 +741,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             output.write_property(in_ray);
             output.write_field(cells, "u", &Cell::u);
             output.write_field(cells, "v", &Cell::v);
-            wall_output.write_positions(wall_nodes);
-            wall_output.write_polarity(wall_nodes);
         }
     }
     return 0;
