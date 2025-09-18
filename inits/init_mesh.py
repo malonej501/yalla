@@ -4,7 +4,7 @@ from vedo import *
 DISPLAY = True
 EXTRUDE = True
 FORMAT = 0  # 0: legacy vtk yalla compatible, 1: new vtk (from vedo)
-SHAPE = 3  # 0: 2D fin shape, 1: 2D rectangular shape, 3: 3D microscopy fin
+SHAPE = 4  # 0: 2D fin shape, 1: 2D rectangular shape, 3: 3D microscopy fin
 EXTRUDE_Z = 0.1  # extrude distance in z direction
 
 # 2: 2D rect with specific dimensions
@@ -47,6 +47,30 @@ def get_shape():
                  (-1, 0, 0),
                  (1, 0, 0)]
         faces = [[0, 1, 2, 3, 4, 5, 6, 7]]
+    if SHAPE == 4:  # fin shape with rays
+        nrays = 11 + 2  # from counting images + 2 for the ends
+        ap = 3  # ap length at proximal side
+        height = 2  # control fin height
+        maxd = 1.5  # max fin height
+        smooth = 1  # more = sharper sin function
+        # assume equal spacing along proximal side
+        p_verts = [(0 + i*ap/(nrays-1), 0, 0) for i in range(nrays)]
+        theta = 180 - 40  # degrees, angle of rays
+
+        # def func(x):
+        #     # quadratic fin edge
+        #     return (maxd*4)/(nrays**2)*(x-(nrays/2))**2 - maxd
+        def func(x):  # clipped sine fin edge
+            return height * np.tanh(smooth * -np.sin(np.pi * (x / nrays)))
+        f_lens = [func(i)for i in range(nrays)]
+        d_verts = [(p_verts[i][0] + f_lens[i]*np.cos(np.radians(theta)),
+                    f_lens[i]*np.sin(np.radians(theta)), 0) for i in range(nrays)]
+
+        # start from the posterior proximal and go clockwise, leave
+        # out the duplicate vertices at the ends
+        verts = [p for p in reversed(p_verts)] + [d for d in d_verts[1:-1]]
+        faces = [[i for i in range(len(verts) + 2)]]
+
     return verts, faces, norms
 
 
@@ -110,6 +134,10 @@ def extrude_mesh(verts):
     return verts_3d, faces_3d
 
 
+def export_custom_fin_object():
+    pass
+
+
 def import_lmks(filename):
     """Import landmark points from a CSV file."""
     vtk = load("../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk")
@@ -133,9 +161,9 @@ if __name__ == "__main__":
     print(f"FORMAT: {FORMAT}")
     print(f"SHAPE: {SHAPE}")
 
-    # v, f, n = get_shape()  # get the shape vertices, faces and polarities
-    v, f, n = import_lmks(
-        "../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk")
+    v, f, n = get_shape()  # get the shape vertices, faces and polarities
+    # v, f, n = import_lmks(
+    #     "../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk")
 
     if EXTRUDE:
         v, f = extrude_mesh(v)  # extrude in z-direction
