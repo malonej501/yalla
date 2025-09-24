@@ -4,8 +4,10 @@ import os
 import pandas as pd
 import cv2
 from matplotlib import pyplot as plt
+import matplotlib.dates as mdates
 from vedo import *
 import datetime
+import statsmodels.formula.api as smf
 
 START_FROM = 171  # index of image to start from when landmarking
 
@@ -621,7 +623,6 @@ def transform_landmarks(lmks, tl=True, rot=True, ref=True):
         pd.DataFrame: Transformed landmark DataFrame.
     """
 
-    print(lmks)
     # Get anterior and posterior edge points, assume order post, ant
     prox = lmks[lmks["type"] == "e"][["x", "y"]].values
     p, a = prox[0], prox[-1]  # posterior and anterior proixmal points
@@ -693,6 +694,98 @@ def get_wallnorms(lmks, n=1):
 
     return lmks_norm
 
+
+def px_to_mm(f_lmks_i, transform=True,):
+    """Convert landmark coordinates into standardised form in mm."""
+
+    # f_lmks_i = f_lmks[f_lmks["date"] == date]
+    fish = f_lmks_i["id"].iloc[0]
+    date = f_lmks_i["date"].iloc[0]
+    i = f_lmks_i["idx"].iloc[0]
+    # print(date)
+
+    # Translate and rotate landmarks to standard orientation
+    if transform:
+        f_lmks_i = transform_landmarks(f_lmks_i)
+
+    # Convert from pixels to mm (assuming 1mm scale bar)
+    scale_bar = f_lmks_i[f_lmks_i["type"] == "s"]
+    if len(scale_bar) != 2:
+        print(
+            f"Skipping {fish}_{date}: need exactly 2 scale bar "
+            + f"points, found {len(scale_bar)}")
+        return
+    sb_len = ((scale_bar.iloc[0]["x"] - scale_bar.iloc[1]["x"])**2 +
+              (scale_bar.iloc[0]["y"] - scale_bar.iloc[1]["y"])**2
+              )**0.5
+    # print(f"1mm scale bar len {fish}_{date}_{i}: {sb_len:.2f} pixels")
+
+    # Divide x and y by scale bar length to get mm
+    f_lmks_i = f_lmks_i.copy()  # Make an explicit copy
+    f_lmks_i.loc[:, "x_mm"] = round(f_lmks_i["x"] / sb_len, 3)
+    f_lmks_i.loc[:, "y_mm"] = round(f_lmks_i["y"] / sb_len, 3)
+
+    return f_lmks_i
+
+
+def ap_len_over_time(path):
+    """Plot length from proximal anterio to proximal posterior over time."""
+
+    lmks = pd.read_csv(path)
+
+    lmks = lmks.groupby(["id", "date"]).apply(
+        px_to_mm).reset_index(drop=True)
+    lmks["date"] = pd.to_datetime(lmks["date"], format="%d-%m")
+    lmks["days"] = (lmks["date"] - lmks["date"].min()).dt.days
+
+    max_lens = lmks.groupby(["id", "days"]).apply(
+        lambda x: max(x[x["type"] == "e"]["x_mm"]) -
+        min(x[x["type"] == "e"]["x_mm"])
+    ).reset_index(name="ap_len_mm")
+
+    # remove outliers
+    max_lens = max_lens[max_lens["ap_len_mm"] < 10]
+    print(max_lens)
+
+    ids = sorted(max_lens["id"].unique(),
+                 key=lambda x: int(x.split('-')[-1]))
+
+    fig, ax = plt.subplots()
+
+    for i in ids:
+        filt = max_lens[max_lens["id"] == i]
+        filt = filt[filt["ap_len_mm"] < 10]  # filter out bad data
+        ax.plot(filt["days"], filt["ap_len_mm"], marker='o', label=i,
+                alpha=0.3)
+
+    ax.set_xlabel("Days since first image")
+    ax.set_ylabel("AP length (mm)")
+    ax.legend(title="Fish ID")
+    ax.grid(alpha=0.3)
+    # see https://en.wikipedia.org/wiki/Mixed_model
+    model = smf.mixedlm("ap_len_mm ~ days", data=max_lens,
+                        groups=max_lens["id"],
+                        # re_formula="~days", # for random slopes
+                        ).fit()
+    pred = model.predict(max_lens)
+    print(model.summary())
+    ci = model.conf_int(alpha=0.05)
+    print(ci)
+    ci_int = ci.loc["Intercept"]
+    ci_slope = ci.loc["days"]
+    fit_u = (ci_int[1] + ci_slope[1] *
+             np.arange(0, max_lens["days"].max()))
+    fit_l = (ci_int[0] + ci_slope[0] *
+             np.arange(0, max_lens["days"].max()))
+    ax.plot(max_lens["days"], pred, color='black',
+            linestyle='--', label='Linear regression')
+    ax.fill_between(np.arange(0, max_lens["days"].max()), fit_l, fit_u, color='gray',
+                    alpha=0.5, label='95% Confidence Interval')
+    ax.text(0.65, 0.05, f"Slope: {model.params['days']:.3f} mm/day\n" +
+            f"p-value: {model.pvalues['days']:.3e}",
+            transform=ax.transAxes, va='bottom', ha="left")
+    plt.show()
+
 # def get_wallnorms(lmks, spacing=0.01):
 #     """Compute midpoint of mesh line segements and associated
 #     normal vector facing away from the mesh interior.
@@ -714,6 +807,7 @@ def get_wallnorms(lmks, n=1):
 #     seg_lengths = np.linalg.norm(np.diff(coords, axis=0), axis=1)
 #     cum_lengths = np.concatenate([[0], np.cumsum(seg_lengths)])
 #     total_length = cum_lengths[-1]
+
 
 #     # Generate positions along the perimeter at constant spacing
 #     n_nodes = int(np.floor(total_length / spacing))
@@ -742,8 +836,6 @@ def get_wallnorms(lmks, n=1):
 #     lmks_norm = pd.concat([lmks, wall_norms], axis=0, ignore_index=True)
 #     lmks_norm[["x_pol", "y_pol"]] = lmks_norm[["x_pol", "y_pol"]].fillna(0.0)
 #     return lmks_norm
-
-
 if __name__ == "__main__":
     # dir_path = "wild_data"
 
@@ -759,4 +851,5 @@ if __name__ == "__main__":
 
     # landmarks_to_vtk("lmks_all/lmks.csv")
     # visualise_landmark_vtks("lmks_all")
-    visualise_landmarks_layered("lmks_all")
+    # visualise_landmarks_layered("lmks_all")
+    ap_len_over_time("lmks_all/lmks.csv")
