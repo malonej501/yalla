@@ -308,7 +308,8 @@ def landmarks_to_vtk(path, transform=True, wallnodes=True, landmarks=True):
                     for _, row in f_lmks_i.iterrows():
                         f.write(f"{row['x_pol']} {row['y_pol']} 0.0\n")
                     # f.write(
-                    #     f"POLYGONS {len(mesh.cells)} {len(mesh.cells) + len(mesh.vertices)}\n")
+                    #     f"POLYGONS {len(mesh.cells)} {len(mesh.cells) +
+                    #       len(mesh.vertices)}\n")
                     # for face in mesh.cells:
                     #     f.write(f"{len(face)} ")
                     #     f.write(" ".join(str(v) for v in face))
@@ -355,6 +356,7 @@ def load_landmark_vtks(dir_path):
     vtk_files["date"] = [os.path.basename(
         f).split("_")[1] for f in vtk_files["path"]]
     vtk_files["date"] = pd.to_datetime(vtk_files["date"], format="%d-%m")
+    vtk_files["day"] = (vtk_files["date"] - vtk_files["date"].min()).dt.days
     vtk_files["stage"] = [int(os.path.basename(
         f).split("_")[2]) for f in vtk_files["path"]]
     vtk_files = vtk_files.sort_values(["fish_id", "stage"])
@@ -413,7 +415,8 @@ def visualise_landmark_vtks(dir_path):
                       + f"{mesh.area():.3f} mm^2")
                 continue
 
-            if "polarity" in mesh.pointdata.keys():  # if mesh contains wall nodes
+            # if mesh contains wall nodes
+            if "polarity" in mesh.pointdata.keys():
                 pdata = pd.DataFrame(
                     {"x": mesh.vertices[:, 0],  # get plot data
                      "y": mesh.vertices[:, 1],
@@ -499,17 +502,8 @@ def visualise_landmarks_layered(dir_path, text=False, norm=False):
     y_min, y_max = min(all_y) - pad, max(all_y) + pad
 
     # prepare colour map
-    # stages = sorted(vtks["stage"].unique())
-    # dates = sorted(vtks["date"].unique())
-    # print(dates)
-    # exit()
-    # max_stage = max(stages)
-    # cnorm = plt.Normalize(vmin=0, vmax=max_stage)
-    # cmap = plt.cm.get_cmap("viridis")
-    dates = sorted(vtks["date"].unique())
-    cmap = plt.cm.get_cmap("viridis", len(dates))
-    date_to_color = {date: cmap(i) for i, date in enumerate(dates)}
-    print(date_to_color)
+    cnorm = plt.Normalize(vmin=0, vmax=vtks["day"].max())
+    cmap = plt.cm.get_cmap("viridis")
 
     # fish_id is columns, stage is rows
     fig, axs = plt.subplots(figsize=(16, 8), nrows=4, ncols=3,
@@ -521,12 +515,10 @@ def visualise_landmarks_layered(dir_path, text=False, norm=False):
             ax = axs.flatten()[j]
             mesh = vtks[(vtks["fish_id"] == fish_id) &
                         (vtks["stage"] == stage)]
-            # print(mesh)
             if len(mesh) == 0:
                 print(f"No mesh for {fish_id} {stage}")
                 continue
-            color = date_to_color[pd.Timestamp(mesh["date"].values[0])]
-            print(pd.Timestamp(mesh["date"].values[0]))
+            color = cmap(cnorm(mesh["day"].values[0]))
             mesh = mesh["mesh"].values[0]
 
             if mesh.area() > max_area:    # likely there was no scale bar
@@ -538,7 +530,8 @@ def visualise_landmarks_layered(dir_path, text=False, norm=False):
                       + f"{mesh.vertices[:, 1].min():.3f} mm")
                 continue
 
-            if "polarity" in mesh.pointdata.keys():  # if mesh contains wall nodes
+            # if mesh contains wall nodes
+            if "polarity" in mesh.pointdata.keys():
                 pdata = pd.DataFrame(
                     {"x": mesh.vertices[:, 0],  # get plot data
                      "y": mesh.vertices[:, 1],
@@ -592,14 +585,11 @@ def visualise_landmarks_layered(dir_path, text=False, norm=False):
 
     fig.supxlabel('X (mm)')
     fig.supylabel('Y (mm)')
-    sm = plt.cm.ScalarMappable(
-        cmap=cmap, norm=plt.Normalize(vmin=0, vmax=len(dates)-1))
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=cnorm)
     sm.set_array([])
 
-    cbar = fig.colorbar(sm, ax=axs, orientation='vertical',
-                        label='Date', shrink=0.5)
-    cbar.set_ticks(range(len(dates)))
-    cbar.set_ticklabels([d.strftime("%d-%m") for d in dates])
+    fig.colorbar(sm, ax=axs, orientation='vertical',
+                 label="Days after first image", shrink=0.5)
     for ax in axs.flatten():
         if not ax.has_data():
             ax.axis("off")  # switch off unused subplots
@@ -677,7 +667,8 @@ def get_wallnorms(lmks, n=1):
 
         norm = np.array([(p2[1] - p1[1]), -1*(p2[0] - p1[0])])
         norm /= np.linalg.norm(norm)  # Normalize the normal vector
-        # Generate n equally spaced points between p1 and p2 (excluding endpoints)
+        # Generate n equally spaced points between p1 and p2 (excluding
+        # endpoints)
         for k in range(1, n+1):
             frac = k / (n+1)
             node = p1 + frac * (p2 - p1)
@@ -779,7 +770,8 @@ def ap_len_over_time(path):
              np.arange(0, max_lens["days"].max()))
     ax.plot(max_lens["days"], pred, color='black',
             linestyle='--', label='Linear regression')
-    ax.fill_between(np.arange(0, max_lens["days"].max()), fit_l, fit_u, color='gray',
+    ax.fill_between(np.arange(0, max_lens["days"].max()), fit_l,
+                    fit_u, color='gray',
                     alpha=0.5, label='95% Confidence Interval')
     ax.text(0.65, 0.05, f"Slope: {model.params['days']:.3f} mm/day\n" +
             f"p-value: {model.pvalues['days']:.3e}",
@@ -851,5 +843,5 @@ if __name__ == "__main__":
 
     # landmarks_to_vtk("lmks_all/lmks.csv")
     # visualise_landmark_vtks("lmks_all")
-    # visualise_landmarks_layered("lmks_all")
-    ap_len_over_time("lmks_all/lmks.csv")
+    visualise_landmarks_layered("lmks_all")
+    # ap_len_over_time("lmks_all/lmks.csv")
