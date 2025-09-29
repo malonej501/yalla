@@ -59,11 +59,15 @@ def render_movie(walls=False, fin=False):
     video_length = 10  # in seconds
     cmap = "viridis"
     # load global properties for consistent gui throught timecourse
-    cell_types = tissue_properties()
+    cell_types, max_bounds = tissue_properties()
 
     # Create a plotter
     p = Plotter(interactive=False)
     p.zoom(ZOOM)
+    axes = Axes(xtitle="x", ytitle="y", ztitle="z",
+                xrange=(max_bounds[0], max_bounds[1]),
+                yrange=(max_bounds[2], max_bounds[3]))
+    p.add(axes)
 
     if EXPORT:
         v = Video(
@@ -84,7 +88,7 @@ def render_movie(walls=False, fin=False):
         wnrms = Glyph(wpts, Arrow().scale(0.5), "normals", c="blue")
         if fin:
             fmesh = Mesh(F_VTKS[i]).alpha(
-                0.1).linecolor("blue")  # .wireframe()
+                0.1).linecolor("black").color("grey")  # .wireframe()
 
         # lims = ((pts.bounds()[0],pts.bounds()[1]),
         # (pts.bounds()[2],pts.bounds()[3]))
@@ -121,7 +125,7 @@ def render_movie(walls=False, fin=False):
         p.remove("bar").add(br)
         # if i == 0:  # only add bar once to avoid flickering
         #     p.add(br)
-        p.show(zoom="tight", axes=1 if SHOW_AX else 0)  # now means auto axs
+        p.show(zoom="tight")  # now means auto axs
 
         if EXPORT:
             v.add_frame()
@@ -163,7 +167,8 @@ def render_movie(walls=False, fin=False):
         # change the cmap for and add bar to all frames
         for k, (pts, wpts, wnrms, fmesh, br, info) in enumerate(frames):
             pts = pts.cmap(cmap, c_prop_local)
-            b = br
+            br = addons.ScalarBar(pts, title=c_prop_local)
+            br.name = "bar"
             frames[k] = (pts, wpts, wnrms, fmesh, br, info)
 
     p.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
@@ -605,12 +610,25 @@ def tissue_properties():
     """Return properties of the tissue over the entire timecourse, not
     deducible individual vtk files e.g. maximum no. cell types"""
     cell_types = []
+    min_x, max_x, min_y, max_y = 0, 0, 0, 0
+    pad = 0.1
     for vtk in VTKS:
         cell_types_i = np.unique(vtk.pointdata["cell_type"])
         if len(cell_types_i) > len(cell_types):
             cell_types = cell_types_i  # get the maximum no. cell types
 
-    return cell_types
+        mesh = Mesh(vtk)
+        if mesh.bounds()[0] < min_x:
+            min_x = mesh.bounds()[0]
+        if mesh.bounds()[1] > max_x:
+            max_x = mesh.bounds()[1]
+        if mesh.bounds()[2] < min_y:
+            min_y = mesh.bounds()[2]
+        if mesh.bounds()[3] > max_y:
+            max_y = mesh.bounds()[3]
+
+    max_bounds = (min_x - pad, max_x + pad, min_y - pad, max_y + pad)
+    return cell_types, max_bounds
 
 
 def get_vtks():
