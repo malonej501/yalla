@@ -11,8 +11,11 @@
 #include <thrust/remove.h>
 
 #include <cmath>
+#include <filesystem>
 #include <iterator>
+#include <regex>
 
+#include "../include/dmesh.cuh"
 #include "../include/dtypes.cuh"
 #include "../include/inits.cuh"
 #include "../include/mesh.cuh"
@@ -33,7 +36,7 @@ MAKE_PT(Cell, u, v);
 __device__ float* d_mech_str;
 __device__ int* d_cell_type;  // cell_type: A=1, B=2, DEAD=0
 __device__ Cell* d_W;  // random number from Weiner process for stochasticity
-__device__ bool* d_in_ray;    // whether a cell is in a ray
+__device__ bool* d_in_slow;   // whether a cell is in a ray
 __device__ Pm d_pm;           // simulation parameters (host h_pm)
 __device__ float3 d_tis_min;  // min coordinate of tissue mesh
 __device__ float3 d_tis_max;  // max coordinate of tissue mesh
@@ -308,49 +311,40 @@ __global__ void death(
             d_W[i] = d_W[n - 1];
             d_cell_type[i] = d_cell_type[n - 1];
             d_mech_str[i] = d_mech_str[n - 1];
-            d_in_ray[i] = d_in_ray[n - 1];
+            d_in_slow[i] = d_in_slow[n - 1];
         }
     }
 }
 
-void init_rays(Mesh& tis, float rays[100][2])  // maximum of 100 rays
+template<typename MeshType>
+void update_slow_reg(MeshType& tis, float slow_reg[2])
 {
-    // host function for initialising rays
-    // float rays[n_ray][2];  // start and end of each ray
-    float p_min, p_max;
-    if (h_pm.ray_dir == 0) {
-        p_min = tis.get_minimum().x;
-        p_max = tis.get_maximum().x;
-    }
-    if (h_pm.ray_dir == 1) {
-        p_min = tis.get_minimum().y;
-        p_max = tis.get_maximum().y;
-    }
+    // host function for updating slow advection region
+    // slow region is a horizontal band across the tissue
+    float p_min = tis.get_minimum().y;
+    float p_max = tis.get_maximum().y;
 
-    if (h_pm.n_rays < 2) {  // if only one ray, set to middle
-        float center = (p_max + p_min) / 2;
-        float p1 = center - (h_pm.s_ray * (p_max - p_min) / 2);
-        float p2 = center + (h_pm.s_ray * (p_max - p_min) / 2);
-        rays[0][0] = p1;  // start of ray either x or y line
-        rays[0][1] = p2;  // end of ray either x or y line
-    } else {
-        for (int i = 0; i < h_pm.n_rays; i++) {
-            float step = (p_max - p_min) / (h_pm.n_rays - 1);
-            float p1 = p_min + i * step;  // start of ray either x or y line
-            float p2 =
-                p1 + (h_pm.s_ray * (p_max - p_min));  // scale by tissue size
-            // x_pairs.push_back({x1, x2});
-            rays[i][0] = p1;
-            rays[i][1] = p2;
-        }
-    }
+    float center = (p_max + p_min) / 2;
+    float band_width =
+        (h_pm.s_slow * (p_max - p_min));   // fraction of total size
+    float p1 = center + (band_width / 2);  // p1 is top of band
+    float p2 = center - (band_width / 2);
+    slow_reg[0] = p1;
+    slow_reg[1] = p2;
+    std::cout << "slow region y: " << p1 << " to " << p2 << "\n";
 }
 
 __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
-    const float (*rays)[2], int time_step)
+    const float (*slow_reg)[2], int time_step)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
+
+    if ((d_X[i].y < (*slow_reg)[0]) && (d_X[i].y > (*slow_reg)[1])) {
+        d_in_slow[i] = true;  // mark cells as in slow region
+    } else {
+        d_in_slow[i] = false;
+    }
 
     if (d_cell_type[i] == 1) {  // only type 1 cells advect
         float norm_x = (d_X[i].x - d_tis_min.x) /
@@ -361,23 +355,71 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
         float ad = d_pm.ad_s;  // default advection strength
         if (d_pm.ad_func == 1 && time_step < ad_time) ad = 0;
 
-        if (d_pm.ray_switch) {
-            for (int k = 0; k < d_pm.n_rays; ++k) {
-                d_in_ray[i] = false;
-                float pos;
-                if (d_pm.ray_dir == 0) pos = d_X[i].x;
-                if (d_pm.ray_dir == 1) pos = d_X[i].y;
-                if (pos >= rays[k][0] && pos <= rays[k][1]) {
-                    d_in_ray[i] = true;
-                    ad = d_pm.soft_ad_s;  // soft_ad if in ray
-                    if (d_pm.ad_func == 1 && time_step < ad_time) ad = 0;
-                    break;  // A-P time delay
-                }
-            }
+        if (d_pm.slow_switch && d_in_slow[i]) {
+            ad = d_pm.soft_ad_s;  // soft_ad if in slow_region
         }
-        if (d_pm.ad_dir == 0) d_dX[i].x += ad;  // +ve x direction
-        if (d_pm.ad_dir == 1) d_dX[i].y -= ad;  // -ve y direction
+        d_dX[i].x += ad * cosf(d_pm.ad_ang * M_PI / 180.0);  // angle in degrees
+        d_dX[i].y -= ad * sinf(d_pm.ad_ang * M_PI / 180.0);  // angle in degrees
     }
+}
+
+__global__ void wall_forces_new(
+    int n_cells, const Cell* d_X, Cell* d_dX, Mesh_d wall_mesh)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n_cells) return;
+
+    float min_dist2 = 1e30f;
+    float3 closest_nm;
+    for (int j = 0; j < wall_mesh.n_facets; ++j) {
+        float3 pt = closest_point_on_triangle(d_X[i], wall_mesh.d_facets[j]);
+        float dx = d_X[i].x - pt.x;
+        float dy = d_X[i].y - pt.y;
+        float dz = d_X[i].z - pt.z;
+        float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 < min_dist2) {
+            min_dist2 = dist2;
+            closest_nm = wall_mesh.d_facets[j].n;
+            // Optionally, store the triangle normal as well
+        }
+    }
+
+    // // Determine if cell outside fin using ray-casting
+    // bool outside = test_exclusion(wall_mesh, d_X[i]);
+    // if (outside) {
+    //     auto F_mag = fmaxf(-min_dist2, 0);  // force magnitude
+    //     d_dX[i].x +=
+    //         closest_nm.x * F_mag;  // force is product of displ and norm vec
+    //     d_dX[i].y += closest_nm.y * F_mag;
+    // }
+    bool outside = test_exclusion(wall_mesh, d_X[i]);
+    if (outside) {
+        auto F_mag = sqrtf(min_dist2) * 20;  // force magnitude
+        d_dX[i].x +=
+            closest_nm.x * F_mag;  // force is product of displ and norm vec
+        d_dX[i].y += closest_nm.y * F_mag;
+    }
+}
+
+template<typename Pt>
+__global__ void grow_cells(int n_cells, Pt* d_X, float amount)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n_cells) return;
+
+    d_X[i].x *= amount;
+    d_X[i].y *= amount;
+    // z remains unchanged
+}
+
+int extract_number(const std::string& filename)
+{
+    // Example filename: DA-1-10_12-07_0_lmk.vtk
+    // Want to extract the '0' before '_lmk.vtk'
+    std::regex re("_(\\d+)_[^_]+\\.vtk$");
+    std::smatch match;
+    if (std::regex_search(filename, match, re)) { return std::stoi(match[1]); }
+    return -1;  // or throw/handle error
 }
 
 int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
@@ -401,8 +443,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     cudaMemcpyToSymbol(d_mech_str, &mech_str.d_prop, sizeof(d_mech_str));
     Property<int> cell_type{h_pm.n_max, "cell_type"};  // cell type labels
     cudaMemcpyToSymbol(d_cell_type, &cell_type.d_prop, sizeof(d_cell_type));
-    Property<bool> in_ray{h_pm.n_max, "in_ray"};  // whether cell in ray or not
-    cudaMemcpyToSymbol(d_in_ray, &in_ray.d_prop, sizeof(d_in_ray));
+    Property<bool> in_slow{
+        h_pm.n_max, "in_slow"};  // whether cell in ray or not
+    cudaMemcpyToSymbol(d_in_slow, &in_slow.d_prop, sizeof(d_in_slow));
     cudaMemcpyToSymbol(d_pm, &h_pm, sizeof(Pm));  // copy host params
 
     // Solver
@@ -411,13 +454,11 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
     // *cells.h_n = h_pm.n_0;
 
-    float rays[h_pm.n_rays][2];  // initialise rays with default values
-    for (int i = 0; i < h_pm.n_rays; i++) {
-        rays[i][0] = 0;
-        rays[i][1] = 0;
-    }
-    float (*d_rays)[2];
-    cudaMalloc(&d_rays, h_pm.n_rays * 2 * sizeof(float));  // GPU mem alloc
+    float slow_reg[2];  // initialise slow_reg with default values
+    slow_reg[0] = 0;
+    slow_reg[1] = 0;
+    float (*d_slow_reg)[2];
+    cudaMalloc(&d_slow_reg, 2 * sizeof(float));  // GPU mem alloc
 
     if (h_pm.tmode == 0) {
         random_disk_z(h_pm.init_dist, cells);
@@ -449,7 +490,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     }
     if (h_pm.tmode ==
         3) {  // cut the tissue mesh out of a random cloud of cells
-        Mesh tis{"../inits/shape2_mesh_3D.vtk"};
+        Mesh tis{"../inits/shape3_mesh_3D.vtk"};
         tis.rescale(h_pm.tis_s);  // expand the mesh to fit to the boundaries
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
@@ -488,16 +529,11 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             else
                 cell_type.h_prop[i] = 2;
         }
-        init_rays(tis, rays);
-        // Print the values of rays after initialization
-        std::cout << "Rays after initialization:" << std::endl;
-        for (int i = 0; i < h_pm.n_rays; i++) {
-            std::cout << "Ray " << i << ": (" << rays[i][0] << ", "
-                      << rays[i][1] << ")" << std::endl;
-        }
+        update_slow_reg(tis, slow_reg);
     }
     if (h_pm.tmode == 5) {  // fin with spot aggregation at top
-        Mesh tis{"../inits/shape2_mesh_3D.vtk"};
+        Mesh tis{"../inits/fin_init.vtk"};
+        // Mesh tis{"../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk"};
         tis.rescale(h_pm.tis_s);
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
@@ -517,13 +553,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             else
                 cell_type.h_prop[i] = 2;
         }
-        init_rays(tis, rays);
-        // Print the values of rays after initialization
-        std::cout << "Rays after initialization:" << std::endl;
-        for (int i = 0; i < h_pm.n_rays; i++) {
-            std::cout << "Ray " << i << ": (" << rays[i][0] << ", "
-                      << rays[i][1] << ")" << std::endl;
-        }
+        update_slow_reg(tis, slow_reg);
     }
 
 
@@ -544,12 +574,25 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     // Initialise properties and k with zeroes
     for (int i = 0; i < h_pm.n_max; i++) {  // initialise with zeroes
         mech_str.h_prop[i] = 0;
-        in_ray.h_prop[i] = false;
+        in_slow.h_prop[i] = false;
     }
 
-    // Copy the ray data to the device
-    cudaMemcpy(
-        d_rays, &rays, h_pm.n_rays * 2 * sizeof(float), cudaMemcpyHostToDevice);
+    // Initialise the wall nodes from file
+    // std::vector<std::string> wall_files;
+    // for (const auto& entry :  // collect all wall file names
+    //     std::filesystem::directory_iterator("../data/lmk_DA-1-10_12-09-25/"))
+    //     { if (entry.path().extension() != ".vtk") continue;
+    //     wall_files.push_back(entry.path().string());
+    // }
+    // std::sort(wall_files.begin(), wall_files.end(),  // sort by stage number
+    //     [](const std::string& a, const std::string& b) {
+    //         return extract_number(a) < extract_number(b);
+    //     });
+    // for (const auto& file : wall_files)
+    //     std::cout << "Wall file: " << file << std::endl;
+
+    Fin fin("../inits/fin_init.vtk",
+        "fin_" + std::to_string(walk_id) + "_" + std::to_string(step));
 
     int time_step;  // declare  outside main loop for access in gen_func
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
@@ -560,26 +603,33 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         // custom forces at every timestep e.g. advection
         thrust::fill(thrust::device, mech_str.d_prop,
             mech_str.d_prop + cells.get_d_n(), 0.0);
-        thrust::fill(thrust::device, in_ray.d_prop,
-            in_ray.d_prop + cells.get_d_n(), false);
+        thrust::fill(thrust::device, in_slow.d_prop,
+            in_slow.d_prop + cells.get_d_n(), false);
 
         // return wall_forces<Cell, boundary_force>(n, d_X, d_dX, 0);
         if (h_pm.adv_switch)
             advection<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                cells.get_d_n(), d_X, d_dX, d_rays, time_step);
+                cells.get_d_n(), d_X, d_dX, d_slow_reg, time_step);
         if (h_pm.fin_walls)
-            return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X, d_dX, 0,
-                h_pm.w_off_s);  //, num_walls, wall_normals, wall_offsets);
+            // return wall_forces_mult<Cell, boundary_forces_mult>(n, d_X,
+            // d_dX,
+            // 0,
+            //     h_pm.w_off_s);  //, num_walls, wall_normals,
+            // wall_offsets);
+            wall_forces_new<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                cells.get_d_n(), d_X, d_dX, fin.mesh);
     };
 
     cells.copy_to_device();
     mech_str.copy_to_device();
     cell_type.copy_to_device();
-    in_ray.copy_to_device();
+    in_slow.copy_to_device();
 
     Vtk_output output{
         "out_" + std::to_string(walk_id) + "_" + std::to_string(step)};
     // create instance of Vtk_output class
+    // Vtk_output wall_output{
+    //     "out_wall_" + std::to_string(walk_id) + "_" + std::to_string(step)};
 
 
     /* the neighbours are initialised with 0. However, you want to use them
@@ -599,18 +649,29 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     cells.copy_to_host();
     mech_str.copy_to_host();
     cell_type.copy_to_host();
-    in_ray.copy_to_host();
+    in_slow.copy_to_host();
 
     output.write_positions(cells);
     output.write_property(mech_str);
     output.write_property(cell_type);
-    output.write_property(in_ray);
+    output.write_property(in_slow);
     output.write_field(cells, "u", &Cell::u);  // write u of each cell to vtk
     output.write_field(cells, "v", &Cell::v);
+
+    fin.write_vtk();
 
 
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
+        if (time_step > 0 && time_step % 10 == 0) {
+            // std::string vtk_filename = wall_files[int(time_step / 100)];
+            // fin.grow(1.01);  // grow the fin by 10% every 100 time steps
+            update_slow_reg(fin, slow_reg);
+            cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
+                cudaMemcpyHostToDevice);  // copy to device
+            // grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+            //     cells.get_d_n(), cells.d_X, 1.01);
+        }
         for (float T = 0.0; T < 1.0; T += h_pm.dt) {
             generate_noise<<<(cells.get_d_n() + 32 - 1) / 32, 32>>>(
                 cells.get_d_n(),
@@ -623,7 +684,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             if (h_pm.type_switch)
                 cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), cells.d_X);  // switch cell types if
-            // conditions are met
+            // conditions are metq
             cells.take_step<pairwise_force, friction_on_background>(
                 h_pm.dt, generic_function);
             if (h_pm.death_switch)
@@ -635,14 +696,15 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             cells.copy_to_host();
             mech_str.copy_to_host();
             cell_type.copy_to_host();
-            in_ray.copy_to_host();
+            in_slow.copy_to_host();
 
             output.write_positions(cells);
             output.write_property(mech_str);
             output.write_property(cell_type);
-            output.write_property(in_ray);
+            output.write_property(in_slow);
             output.write_field(cells, "u", &Cell::u);
             output.write_field(cells, "v", &Cell::v);
+            fin.write_vtk();
         }
     }
     return 0;

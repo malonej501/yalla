@@ -4,7 +4,7 @@ from vedo import *
 DISPLAY = True
 EXTRUDE = True
 FORMAT = 0  # 0: legacy vtk yalla compatible, 1: new vtk (from vedo)
-SHAPE = 2  # 0: 2D fin shape, 1: 2D rectangular shape,
+SHAPE = 4  # 0: 2D fin shape, 1: 2D rectangular shape, 3: 3D microscopy fin
 EXTRUDE_Z = 0.1  # extrude distance in z direction
 
 # 2: 2D rect with specific dimensions
@@ -15,7 +15,7 @@ def get_shape():
     Returns the vertices and faces of the fin mesh based on the SHAPE 
     variable.
     """
-    verts, faces = [], []
+    verts, faces, norms = [], [], []
     if SHAPE == 0:
         # 2D fin shape
         verts = [(-1, 0.5, 0), (0.75, 0.5, 0), (0.75, -0.5, 0),
@@ -35,10 +35,46 @@ def get_shape():
                  (ap/2, -pd/2, 0), (-ap/2, -pd/2, 0)]
         faces = [[0, 1, 2, 3]]
 
-    return verts, faces
+    if SHAPE == 3:
+        ap = 7.5  # anterior-posterior length mm
+        pd = 2.5  # proximal-distal height mm
+        verts = [(0, pd/2, 0),  # top
+                 (0, -pd/2, 0),  # bottom
+                 (-ap/2, 0, 0),  # left
+                 (ap/2, 0, 0)]  # right
+        norms = [(0, 1, 0),
+                 (0, -1, 0),
+                 (-1, 0, 0),
+                 (1, 0, 0)]
+        faces = [[0, 1, 2, 3, 4, 5, 6, 7]]
+    if SHAPE == 4:  # fin shape with rays
+        nrays = 11 + 2  # from counting images + 2 for the ends
+        ap = 3  # ap length at proximal side
+        height = 2  # control fin height
+        maxd = 1.5  # max fin height
+        smooth = 1  # more = sharper sin function
+        # assume equal spacing along proximal side
+        p_verts = [(0 + i*ap/(nrays-1), 0, 0) for i in range(nrays)]
+        theta = 180 - 40  # degrees, angle of rays
+
+        # def func(x):
+        #     # quadratic fin edge
+        #     return (maxd*4)/(nrays**2)*(x-(nrays/2))**2 - maxd
+        def func(x):  # clipped sine fin edge
+            return height * np.tanh(smooth * -np.sin(np.pi * (x / nrays)))
+        f_lens = [func(i)for i in range(nrays)]
+        d_verts = [(p_verts[i][0] + f_lens[i]*np.cos(np.radians(theta)),
+                    f_lens[i]*np.sin(np.radians(theta)), 0) for i in range(nrays)]
+
+        # start from the posterior proximal and go clockwise, leave
+        # out the duplicate vertices at the ends
+        verts = [p for p in reversed(p_verts)] + [d for d in d_verts[1:-1]]
+        faces = [[i for i in range(len(verts) + 2)]]
+
+    return verts, faces, norms
 
 
-def export_vtk_custom(verts, faces):
+def export_vtk_custom(verts, faces, norms):
     """Export verts and faces manually to legacy vtk"""
 
     # Create the vtk file
@@ -66,6 +102,14 @@ def export_vtk_custom(verts, faces):
                 vtk_file.write(" " + str(vert))
             vtk_file.write("\n")
 
+        # Write the normals if they exist
+        if len(norms) == len(verts):
+            vtk_file.write("POINT_DATA " + str(len(verts)) + "\n")
+            vtk_file.write("NORMALS polarity float\n")
+            for norm in norms:
+                vtk_file.write(str(norm[0]) + " " +
+                               str(norm[1]) + " " + str(norm[2]) + "\n")
+
 
 def extrude_mesh(verts):
     """Extrude 2D shape in the z direction by a specified distance mesh"""
@@ -90,6 +134,21 @@ def extrude_mesh(verts):
     return verts_3d, faces_3d
 
 
+def export_custom_fin_object():
+    pass
+
+
+def import_lmks(filename):
+    """Import landmark points from a CSV file."""
+    vtk = load("../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk")
+
+    v = vtk.vertices
+    f = vtk.cells
+    n = vtk.pointdata["polarity"]
+
+    return v, f, n
+
+
 if __name__ == "__main__":
 
     # collect bash arguments
@@ -102,7 +161,9 @@ if __name__ == "__main__":
     print(f"FORMAT: {FORMAT}")
     print(f"SHAPE: {SHAPE}")
 
-    v, f = get_shape()  # get the shape vertices and faces
+    v, f, n = get_shape()  # get the shape vertices, faces and polarities
+    # v, f, n = import_lmks(
+    #     "../data/lmk_DA-1-10_12-09-25/DA-1-10_12-07_0_lmk.vtk")
 
     if EXTRUDE:
         v, f = extrude_mesh(v)  # extrude in z-direction
@@ -120,6 +181,6 @@ if __name__ == "__main__":
         plt.interactive()
 
     if FORMAT == 0:
-        export_vtk_custom(f_mesh.vertices, f_mesh.cells)
+        export_vtk_custom(f_mesh.vertices, f_mesh.cells, n)
     elif FORMAT == 1:
         f_mesh.write(f"shape{SHAPE}_mesh.vtk", binary=False)

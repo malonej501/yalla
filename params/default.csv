@@ -1,11 +1,13 @@
 param,group,type,value,description
 n_max,general,int,200000,Max no. cells
+n_max,general,int,200000,Max no. cells
 r_max,general,float,0.1,Max interaction distance betwen two cells
-g_size,general,int,50,Size of grid in which neighbours are searched-default 50
+g_size,general,int,50,Size of grid in which neighbours are searched
 noise,general,float,0.00,Magnitude of noise
 cont_time,general,int,1000,Simulation duration
 dt,general,float,0.1,Time step for Euler integration
 no_frames,general,int,100,No. frames of simulation output to vtk
+tmode,tissue_init,int,5,"condition for initialisation of cells: 0-random disk, 1-regular rectangle, 2-regular rectangle with spot, 3-fin mesh (need 10000 init cells minimum), 4-fin mesh with spot at left, 5-fin mesh with spot at top"
 tmode,tissue_init,int,5,"condition for initialisation of cells: 0-random disk, 1-regular rectangle, 2-regular rectangle with spot, 3-fin mesh (need 10000 init cells minimum), 4-fin mesh with spot at left, 5-fin mesh with spot at top"
 init_dist,tissue_init,float,0.05,mean distance between cells when initialised
 div_dist,tissue_init,float,0.02,distance between parent and child cells
@@ -16,7 +18,7 @@ fin_walls,tissue_init,bool,true,activate force walls
 w_off_s,tissue_init,float,1,scale factor for wall offsets (fit with tis_s)
 ray_switch,tissue_init,bool,true,different advection strength between fin rays
 ray_dir,tissue_init,int,1,"ray direction: 0-x, 1-y"
-n_rays,tissue_init,int,1,number of rays
+n_rays,tissue_init,int,3,number of rays
 s_ray,tissue_init,float,0.1,x width of the rays % of the tissue length in ray_dir
 mov_switch,migration,bool,true,cell movement switch
 diff_adh_rep,migration,bool,true,differential adhesion and repulsion switch

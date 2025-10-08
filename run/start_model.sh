@@ -47,3 +47,4 @@ echo "Job $job_id has completed."
 
 mv exec-$job_id.out output/exec-$job_id.out 
 cp ../examples/eggspot.cu output/eggspot.cu # copy source code into output directory
+cp ../params/default.csv output/default.csv # copy params.h into output directory

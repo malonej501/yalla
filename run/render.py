@@ -1,10 +1,11 @@
 import sys
+import os
 import shapely
 import math
 from matplotlib.patches import Polygon
 import matplotlib.pyplot as plt
 from vedo import Plotter, Points, show, addons, Text2D, Mesh, Line, Video
-from vedo import load, image, pyplot, Axes
+from vedo import load, image, pyplot, Axes, Glyph, Arrow, NormalLines
 import pandas as pd
 import numpy as np
 import alphashape
@@ -21,6 +22,8 @@ ZOOM = 0.6  # define the how far the camera is out
 PT_SIZE = 12  # how large the cells are drawn
 ANIMATE = 2  # 0 = False, 1 = Matplotlib, 2 = Vedo
 SHOW_AX = True  # show axes
+WALLS = True  # render walls if present
+FIN = True  # render fin mesh if present
 FOLDER_PATH = "../run/saves/test"  # default output folder
 VTKS = None  # list of vtk files
 WALK_ID = 0  # defualt if only one tissue simulation
@@ -32,7 +35,7 @@ EPS = 0.05  # maximum distance between two samples for one to be considered
 
 
 def render_frame():
-    """Render the final element of a list of vtks offscreen and export as 
+    """Render the final element of a list of vtks offscreen and export as
     .png"""
 
     # virtual display for offscreen rendering
@@ -47,8 +50,8 @@ def render_frame():
     display.stop()
 
 
-def render_movie():
-    """Renders movie of growing tissue with one cell property colourised 
+def render_movie(walls=False, fin=False):
+    """Renders movie of growing tissue with one cell property colourised
     e.g. cell_type, u, mech_str"""
 
     print(f"Rendering: {FOLDER_PATH}")
@@ -56,11 +59,15 @@ def render_movie():
     video_length = 10  # in seconds
     cmap = "viridis"
     # load global properties for consistent gui throught timecourse
-    cell_types = tissue_properties()
+    cell_types, max_bounds = tissue_properties()
 
     # Create a plotter
     p = Plotter(interactive=False)
     p.zoom(ZOOM)
+    axes = Axes(xtitle="x", ytitle="y", ztitle="z",
+                xrange=(max_bounds[0], max_bounds[1]),
+                yrange=(max_bounds[2], max_bounds[3]))
+    p.add(axes)
 
     if EXPORT:
         v = Video(
@@ -74,6 +81,15 @@ def render_movie():
     for i, vtk in enumerate(VTKS):
 
         pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
+        wpts = Points([])  # empty points object
+        fmesh = None  # empty mesh object
+        if walls:
+            wpts = Points(W_VTKS[i]).point_size(PT_SIZE * ZOOM).color("black")
+        wnrms = Glyph(wpts, Arrow().scale(0.5), "normals", c="blue")
+        if fin:
+            fmesh = Mesh(F_VTKS[i]).alpha(
+                0.1).linecolor("black").color("grey")  # .wireframe()
+
         # lims = ((pts.bounds()[0],pts.bounds()[1]),
         # (pts.bounds()[2],pts.bounds()[3]))
         if C_PROP == "cell_type":  # ensure cmap for c_type is constant
@@ -94,16 +110,22 @@ def render_movie():
             pos="bottom-left")
 
         pts.name = "cells"
+        wpts.name = "wall_nodes"
+        wnrms.name = "wall_normals"
+        fmesh.name = "fin_mesh"
         br.name = "bar"
         info.name = "info"
-        frames.append((pts, br, info))
+        frames.append((pts, wpts, wnrms, fmesh, br, info))
         # Add the mesh to the plotter
         p.remove("cells").add(pts)
+        p.remove("wall_nodes").add(wpts)
+        p.remove("wall_normals").add(wnrms)
+        p.remove("fin_mesh").add(fmesh)
         p.remove("info").add(info)
         p.remove("bar").add(br)
         # if i == 0:  # only add bar once to avoid flickering
         #     p.add(br)
-        p.show(zoom="tight", axes=1 if SHOW_AX else 0)  # now means auto axs
+        p.show(zoom="tight")  # now means auto axs
 
         if EXPORT:
             v.add_frame()
@@ -113,9 +135,12 @@ def render_movie():
 
     def slider1(widget, _):
         val = widget.value  # get the slider current value
-        pts, br, info = frames[int(val)]
+        pts, wpts, wnrms, fmesh, br, info = frames[int(val)]
 
         p.remove("cells").add(pts)
+        p.remove("wall_nodes").add(wpts)
+        p.remove("wall_normals").add(wnrms)
+        p.remove("fin_mesh").add(fmesh)
         p.remove("bar").add(br)
         p.remove("info").add(info)
 
@@ -128,7 +153,8 @@ def render_movie():
         if val == slider2.prev_val:  # only update if int val has changed
             return
         slider2.prev_val = val
-        pts, br, info = frames[int(val)]  # get current frame
+        # get current frame
+        pts, wpts, wnrms, fmesh, br, info = frames[int(val)]
         c_prop_local = pts.pointdata.keys()[val]  # return new cmap from slider
 
         # change the cmap for and bar to the current frame
@@ -139,10 +165,11 @@ def render_movie():
         p.render()
 
         # change the cmap for and add bar to all frames
-        for k, (pts, b, info) in enumerate(frames):
+        for k, (pts, wpts, wnrms, fmesh, br, info) in enumerate(frames):
             pts = pts.cmap(cmap, c_prop_local)
-            b = br
-            frames[k] = (pts, b, info)
+            br = addons.ScalarBar(pts, title=c_prop_local)
+            br.name = "bar"
+            frames[k] = (pts, wpts, wnrms, fmesh, br, info)
 
     p.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
     p.add_slider(slider2, 0, len(pts.pointdata.keys())-1,
@@ -187,7 +214,7 @@ def show_chem_grad():
 
 
 def tissue_stats():
-    """Return basic tissue stats for each vtk file e.g. tissue xmin and xmax, 
+    """Return basic tissue stats for each vtk file e.g. tissue xmin and xmax,
     no. each cell type etc."""
 
     stats = []
@@ -416,7 +443,7 @@ def pattern_stats():
 
 
 def plot_alpha_shape_stats_vedo(d):
-    """Plot the spot shape statistics over simulation timecourse from 
+    """Plot the spot shape statistics over simulation timecourse from
     dataframe of statistics using vedo"""
 
     t = 2.0  # text scale
@@ -460,7 +487,7 @@ def plot_alpha_shape_stats_vedo(d):
 
 
 def plot_alpha_shape_stats(d):
-    """Plot the spot shape statistics over simulation timecourse from 
+    """Plot the spot shape statistics over simulation timecourse from
     dataframe of statistics using matplotlib"""
 
     figs = []
@@ -580,22 +607,53 @@ def plot_alpha_shapes(uniq_labs, labels, core_samples_mask, spot_cells,
 
 
 def tissue_properties():
-    """Return properties of the tissue over the entire timecourse, not 
+    """Return properties of the tissue over the entire timecourse, not
     deducible individual vtk files e.g. maximum no. cell types"""
     cell_types = []
+    min_x, max_x, min_y, max_y = 0, 0, 0, 0
+    pad = 0.1
     for vtk in VTKS:
         cell_types_i = np.unique(vtk.pointdata["cell_type"])
         if len(cell_types_i) > len(cell_types):
             cell_types = cell_types_i  # get the maximum no. cell types
 
-    return cell_types
+        mesh = Mesh(vtk)
+        if mesh.bounds()[0] < min_x:
+            min_x = mesh.bounds()[0]
+        if mesh.bounds()[1] > max_x:
+            max_x = mesh.bounds()[1]
+        if mesh.bounds()[2] < min_y:
+            min_y = mesh.bounds()[2]
+        if mesh.bounds()[3] > max_y:
+            max_y = mesh.bounds()[3]
+
+    max_bounds = (min_x - pad, max_x + pad, min_y - pad, max_y + pad)
+    return cell_types, max_bounds
+
+
+def get_vtks():
+    """Return lists of cell and wall vtk files in the output folder"""
+
+    cell = sorted(
+        (f"{FOLDER_PATH}/{i}" for i in os.listdir(FOLDER_PATH)
+         if i.endswith(".vtk") and "wall" not in i and "fin" not in i),
+        key=lambda x: int(os.path.splitext(x)[0].split("_")[-1])
+    )
+    wall = sorted((f"{FOLDER_PATH}/{i}" for i in os.listdir(
+        f"{FOLDER_PATH}") if i.endswith(".vtk") and "wall" in i),
+        key=lambda x: int(os.path.splitext(x)[0].split("_")[-1]))
+    fin = sorted((f"{FOLDER_PATH}/{i}" for i in os.listdir(
+        f"{FOLDER_PATH}") if i.endswith(".vtk") and "fin" in i),
+        key=lambda x: int(os.path.splitext(x)[0].split("_")[-1]))
+
+    return cell, wall, fin
 
 
 def print_help():
     """Print help message for the script"""
     help_message = """
     Usage: python3 render.py [vtk_directory] [options]
-    
+
     Options:
         -h              Show this help message and exit.
         -e              Export the rendering to video file.
@@ -641,10 +699,17 @@ if __name__ == "__main__":
         FOLDER_PATH = f'../run/{output_folder}'  # directory
 
         if FUNC == 0:
-            VTKS = load(f"{FOLDER_PATH}/*.vtk")
-            render_movie()
+            cell_vtks, wall_vtks, fin_vtks = get_vtks()
+            VTKS = load(cell_vtks)
+            if WALLS and len(wall_vtks) > 0:
+                W_VTKS = load(wall_vtks)
+            if FIN and len(fin_vtks) > 0:
+                F_VTKS = load(fin_vtks)
+            render_movie(walls=WALLS and len(wall_vtks) > 0,
+                         fin=FIN and len(fin_vtks) > 0)
         elif FUNC == 1:
-            VTKS = load(f"{FOLDER_PATH}/*.vtk")
+            cell_vtks, wall_vtks, fin_vtks = get_vtks()
+            VTKS = load(cell_vtks)
             pattern_stats()
         elif FUNC == 2:
             VTKS = load(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_*.vtk")

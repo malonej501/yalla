@@ -1,6 +1,5 @@
 #include <fstream>
 #include <iostream>
-#include <map>
 #include <string>
 
 #define COMPILE_AS_LIBRARY  // to avoid redefining main
@@ -11,24 +10,27 @@ using namespace std;
 
 // Simulation hyperparameters
 
-const float mut_scale = 0.1;  // mutation scale
-const int n_steps = 3;        // number of iterations in chain
+const float mut_mplr = 0.1;  // mutation multiplier
+const int n_steps = 1000;    // number of iterations in chain
+
+// Save initial parameter values
+Pm h_def_pm;
 
 string mutate(Pm& h_pm)
 {
-    // random mutation value
-    float mut = static_cast<float>(rand()) / RAND_MAX * mut_scale;
-
-    array<float*, 4> targets = {
-        &h_pm.k_prod, &h_pm.k_deg, &h_pm.D_u, &h_pm.u_death};
-
+    array<float*, 5> array<float*, 5> targets = {
+        &h_pm.A_div, &h_pm.k_prod, &h_pm.k_deg, &h_pm.D_u, &h_pm.u_death};
     int target_idx = rand() % targets.size();  // pick random target
+
+    float mut_scale = mut_mplr
+        // random mutation value
+        float mut = static_cast<float>(rand()) / RAND_MAX * mut_scale;
 
 
     bool is_negative = rand() % 2;  // give random sign to mutation
     if (is_negative) mut *= -1;
 
-    const char* target_names[] = {"k_prod", "k_deg", "D_u", "u_death"};
+    const char* target_names[] = {"A_div", "k_prod", "k_deg", "D_u", "u_death"};
     cout << "\n\nMutating " << target_names[target_idx] << " by " << mut
          << "\n\n"
          << endl;
@@ -73,10 +75,17 @@ int main()
     for (int i = 0; i < n_steps; i++) {
         cout << "Step: " << i << endl;
         string target = mutate(h_pm);  // select target and change
-        tissue_sim(0, NULL, i);
+        tissue_sim(0, NULL, walk_id, i);
         // check output
+
+        system(
+            (". ../venv/bin/activate && python3 ../run/render.py output -f 2 "
+             "-w " +
+                to_string(walk_id) + " -s " + to_string(i))
+                .c_str());
         write_report_row(
             report_file, walk_id, i, attempt, status, target, h_pm);
+        report_file.flush();  // flush the buffer
     }
     return 0;
 }
