@@ -9,7 +9,7 @@ rm output/*
 
 # generate .h file from default parameters
 source ../venv/bin/activate
-python3 ../sample/pwriter.py
+python3 ../sample/pwriter.py #-p volk_params.csv
 deactivate
 
 # compile the model
