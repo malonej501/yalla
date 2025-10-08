@@ -258,7 +258,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
     d_X[n].v = d_X[i].v;
 }
 
-__global__ void cell_switching(int n_cells, Cell* d_X)
+__global__ void cell_switching(int n_cells, Cell* d_X, const float* d_slow_reg)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
@@ -267,30 +267,14 @@ __global__ void cell_switching(int n_cells, Cell* d_X)
     // if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 3;
     if (d_pm.tmode == 5) {  // switching for non-advecting/advecting spot
                             // cells
-        float top_y = d_tis_max.y - (0.4 * (d_tis_max.y - d_tis_min.y));
-        float bot_y = d_tis_min.y + (0.4 * (d_tis_max.y - d_tis_min.y));
-        // printf("top_y: %f, bot_y: %f\n", top_y, bot_y);
-        if (d_cell_type[i] == 1 && d_X[i].u > 0.4 && d_X[i].y < top_y &&
-            d_X[i].y > bot_y)
-            d_cell_type[i] = 3;  // don't switch if still in top 10% of
-                                 // tissue
+        if (d_cell_type[i] == 1 && d_X[i].u > 0.4 && d_X[i].y < d_slow_reg[0] &&
+            d_X[i].y > d_slow_reg[1]) {  // restrict switching to slow region
+            d_cell_type[i] = 3;
+        }
+        // if (d_cell_type[i] == 1 && d_X[i].u > 0.48) { // switch anywhere
+        //     d_cell_type[i] = 3;
+        // }
     }
-    // if (d_cell_type[i] == 2 && d_X[i].u > 180) {
-    //     d_cell_type[i] = 1;  // switch to spot cell if u high
-    // }
-    // if (d_cell_type[i] == 1 && d_X[i].u < 180) {
-    //     d_cell_type[i] = 2;  // switch to non-spot cell if u low
-    // }
-    // float top_y = d_tis_max.y - (0.2 * (d_tis_max.y - d_tis_min.y));
-    // float bot_y = d_tis_min.y + (0.2 * (d_tis_max.y - d_tis_min.y));
-    // if (d_X[i].y < top_y && d_X[i].y > bot_y) {
-    //     if (d_cell_type[i] == 1 && d_X[i].v > d_pm.vthresh) {
-    //         d_cell_type[i] = 3;  // switch to spot cell if u high
-    //     }
-    //     if (d_cell_type[i] == 3 && d_X[i].v < d_pm.vthresh) {
-    //         d_cell_type[i] = 2;  // switch to non-spot cell if u low
-    //     }
-    // }
 }
 
 __global__ void death(
@@ -331,16 +315,19 @@ void update_slow_reg(MeshType& tis, float slow_reg[2])
     float p2 = center - (band_width / 2);
     slow_reg[0] = p1;
     slow_reg[1] = p2;
+    // cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
+    //     cudaMemcpyHostToDevice);  // copy to device
     std::cout << "slow region y: " << p1 << " to " << p2 << "\n";
 }
 
 __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
-    const float (*slow_reg)[2], int time_step)
+    const float* d_slow_reg, int time_step)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
+    // printf("slow_reg: %f, %f\n", (*slow_reg)[0], (*slow_reg)[1]);
 
-    if ((d_X[i].y < (*slow_reg)[0]) && (d_X[i].y > (*slow_reg)[1])) {
+    if ((d_X[i].y < d_slow_reg[0]) && (d_X[i].y > d_slow_reg[1])) {
         d_in_slow[i] = true;  // mark cells as in slow region
     } else {
         d_in_slow[i] = false;
@@ -348,9 +335,9 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
 
     if (d_cell_type[i] == 1) {  // only type 1 cells advect
         float norm_x = (d_X[i].x - d_tis_min.x) /
-                       (d_tis_max.x - d_tis_min.x);  // % along x axis
-        float ad_time =
-            norm_x * d_pm.cont_time * 0.5;  // wait time proportional to norm_x
+                       (d_tis_max.x - d_tis_min.x);  // frac along x axis
+        float ad_time =  // wait time proportional to x frac, total duration
+            norm_x * d_pm.cont_time * d_pm.ad_mult;  // and wait multiplier
 
         float ad = d_pm.ad_s;  // default advection strength
         if (d_pm.ad_func == 1 && time_step < ad_time) ad = 0;
@@ -454,10 +441,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.r_max};
     // *cells.h_n = h_pm.n_0;
 
-    float slow_reg[2];  // initialise slow_reg with default values
-    slow_reg[0] = 0;
-    slow_reg[1] = 0;
-    float (*d_slow_reg)[2];
+    float slow_reg[2] = {0, 0};  // initialise slow_reg with default values
+    float* d_slow_reg;
     cudaMalloc(&d_slow_reg, 2 * sizeof(float));  // GPU mem alloc
 
     if (h_pm.tmode == 0) {
@@ -530,6 +515,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                 cell_type.h_prop[i] = 2;
         }
         update_slow_reg(tis, slow_reg);
+        cudaMemcpy(
+            d_slow_reg, slow_reg, 2 * sizeof(float), cudaMemcpyHostToDevice);
     }
     if (h_pm.tmode == 5) {  // fin with spot aggregation at top
         Mesh tis{"../inits/fin_init.vtk"};
@@ -554,6 +541,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                 cell_type.h_prop[i] = 2;
         }
         update_slow_reg(tis, slow_reg);
+        cudaMemcpy(
+            d_slow_reg, slow_reg, 2 * sizeof(float), cudaMemcpyHostToDevice);
     }
 
 
@@ -665,12 +654,15 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
         if (time_step > 0 && time_step % 10 == 0) {
             // std::string vtk_filename = wall_files[int(time_step / 100)];
-            // fin.grow(1.01);  // grow the fin by 10% every 100 time steps
-            update_slow_reg(fin, slow_reg);
-            cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
-                cudaMemcpyHostToDevice);  // copy to device
-            // grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-            //     cells.get_d_n(), cells.d_X, 1.01);
+            if (h_pm.t_grow_switch) {
+                fin.grow(h_pm.t_growth_rate);  // grow the fin by 10% every
+                // 10 timesteps
+                grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                    cells.get_d_n(), cells.d_X, h_pm.t_growth_rate);
+                update_slow_reg(fin, slow_reg);
+                cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
+                    cudaMemcpyHostToDevice);  // copy to device
+            }
         }
         for (float T = 0.0; T < 1.0; T += h_pm.dt) {
             generate_noise<<<(cells.get_d_n() + 32 - 1) / 32, 32>>>(
@@ -683,7 +675,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                     cells.d_n);  // simulate proliferation
             if (h_pm.type_switch)
                 cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X);  // switch cell types if
+                    cells.get_d_n(), cells.d_X,
+                    d_slow_reg);  // switch cell types if
             // conditions are metq
             cells.take_step<pairwise_force, friction_on_background>(
                 h_pm.dt, generic_function);
