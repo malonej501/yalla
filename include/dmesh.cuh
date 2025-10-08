@@ -30,7 +30,7 @@ struct Mesh_d {
     int n_facets;
 };
 
-__device__ bool intersect_ray_triangle(
+__host__ __device__ bool intersect_ray_triangle(
     const float3& ray_origin, const float3& ray_end, const Triangle_d& T)
 {
     // Möller–Trumbore intersection algorithm
@@ -74,7 +74,7 @@ __device__ bool intersect_ray_triangle(
 }
 
 // Theory and algorithm: http://geomalgorithms.com/a06-_intersect-2.html
-__device__ bool intersect(
+__host__ __device__ bool intersect(
     const float3& ray_origin, const float3& ray_end, Triangle_d T)
 {
     // Find intersection point PI
@@ -106,7 +106,7 @@ __device__ bool intersect(
 
 
 template<typename Pt>
-__device__ bool test_exclusion(const Mesh_d& mesh, const Pt d_X)
+__host__ __device__ bool test_exclusion(const Mesh_d& mesh, const Pt d_X)
 {
     float3 point = make_float3(d_X.x, d_X.y, d_X.z);  // Start at cell
     // Cast a ray in a fixed direction
@@ -226,9 +226,11 @@ public:
     void write_vtk();
     std::string out_name;
     int time_step = 0;
+    float3 get_maximum();
+    float3 get_minimum();
 };
 
-Fin::Fin(std::string file_name, std::string out_name)
+Fin::Fin(std::string file_name, std::string out_name = "NONE")
 {
     h_facets = read_facets_from_vtk(file_name);
     n_facets = h_facets.size();
@@ -257,18 +259,6 @@ void Fin::grow(float amount)
         cudaMemcpyHostToDevice);
 }
 
-template<typename Pt>
-__global__ void grow_cells(int n_cells, Pt* d_X, float amount)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n_cells) return;
-
-    d_X[i].x *= amount;
-    d_X[i].y *= amount;
-    // z remains unchanged
-}
-
-
 void Fin::write_vtk()
 {
     std::string current_path =
@@ -290,4 +280,27 @@ void Fin::write_vtk()
     }
     file.close();
     time_step++;
+}
+
+
+float3 Fin::get_maximum()
+{
+    float3 max_pt = make_float3(-1e30f, -1e30f, -1e30f);
+    for (const auto& tri : h_facets) {
+        max_pt.x = fmaxf(max_pt.x, fmaxf(tri.V0.x, fmaxf(tri.V1.x, tri.V2.x)));
+        max_pt.y = fmaxf(max_pt.y, fmaxf(tri.V0.y, fmaxf(tri.V1.y, tri.V2.y)));
+        max_pt.z = fmaxf(max_pt.z, fmaxf(tri.V0.z, fmaxf(tri.V1.z, tri.V2.z)));
+    }
+    return max_pt;
+}
+
+float3 Fin::get_minimum()
+{
+    float3 min_pt = make_float3(1e30f, 1e30f, 1e30f);
+    for (const auto& tri : h_facets) {
+        min_pt.x = fminf(min_pt.x, fminf(tri.V0.x, fminf(tri.V1.x, tri.V2.x)));
+        min_pt.y = fminf(min_pt.y, fminf(tri.V0.y, fminf(tri.V1.y, tri.V2.y)));
+        min_pt.z = fminf(min_pt.z, fminf(tri.V0.z, fminf(tri.V1.z, tri.V2.z)));
+    }
+    return min_pt;
 }
