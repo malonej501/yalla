@@ -56,20 +56,13 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         // Chemical production and degredation
 
         if (d_pm.cmode == 0) {  // chemical production and degredation
-            dF.u = d_pm.k_prod * (1.0 - Xi.u) *
-                   (d_cell_type[i] == 1 ||
-                       d_cell_type[i] == 3);  // cell type 1/3 produce u
-            dF.v = d_pm.k_prod * (1.0 - Xi.v) *
-                   (d_cell_type[i] == 2);  // cell type 2 produces chemical v
-            // dF.u = d_pm.k_prod * ((d_cell_type[i] == 1 || d_cell_type[i] ==
-            // 3) &
-            //                          Xi.u < 1);  // stop making u when it
-            //                                      //   reaches 1
-            // dF.v = d_pm.k_prod *
-            //        ((d_cell_type[i] == 2) & Xi.v < 1);  // stop making v when
-            // it reaches 1
-            dF.u -= d_pm.k_deg * (Xi.u);
-            dF.v -= d_pm.k_deg * (Xi.v);
+            if (d_cell_type[i] == 2) {
+                dF.v = d_pm.k_prod * (1.0 - Xi.v);  // prod decays approaching 1
+                dF.u = -d_pm.k_deg * (Xi.u);        // deg decays approaching 0
+            } else {
+                dF.u = d_pm.k_prod * (1.0 - Xi.u);
+                dF.v = -d_pm.k_deg * (Xi.v);
+            }
         }
 
         if (d_pm.cmode == 1) {
@@ -120,18 +113,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
 
     // Diffusion
     dF.u = -d_pm.D_u * r.u;  // r = Xi - Xj solvers.cuh line 448
-    dF.v = -d_pm.D_v * r.v;
-    // dF.u = -((Xi.x + 3) * 0.01) * r.u;
-    // dF.v = -((Xi.y + 1.5) * 0.01) * r.v;
-    // dF.u = -0.1 * r.u;
-    // dF.v = -4 * r.v;
-    // dF.u = -Xi.x * r.u * 0.01;
-    // dF.v = -Xi.y * r.v * 0.01;
-    // dF.u = -1 * r.u;
-    // dF.v = -40 * r.v;
-    // dF.u = -0.01 * r.u;
-    // dF.v = -0.05 * r.v;
-
+    dF.v = -d_pm.D_v * r.v;  // large D causes numerical instability
 
     // Mechanical forces
 
@@ -267,7 +249,8 @@ __global__ void cell_switching(int n_cells, Cell* d_X, const float* d_slow_reg)
     // if (d_cell_type[i] == 1 && d_X[i].u > 0.5) d_cell_type[i] = 3;
     if (d_pm.tmode == 5) {  // switching for non-advecting/advecting spot
                             // cells
-        if (d_cell_type[i] == 1 && d_X[i].u > 0.4 && d_X[i].y < d_slow_reg[0] &&
+        if (d_cell_type[i] == 1 && d_X[i].u > d_pm.u_trans &&
+            d_X[i].y < d_slow_reg[0] &&
             d_X[i].y > d_slow_reg[1]) {  // restrict switching to slow region
             d_cell_type[i] = 3;
         }
@@ -475,7 +458,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     }
     if (h_pm.tmode ==
         3) {  // cut the tissue mesh out of a random cloud of cells
-        Mesh tis{"../inits/shape3_mesh_3D.vtk"};
+        Mesh tis{"../inits/fin_init.vtk"};
         tis.rescale(h_pm.tis_s);  // expand the mesh to fit to the boundaries
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();
@@ -492,9 +475,12 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                                       ? 1   // set cell type to 1 for spot
                                       : 2;  // cells, and 2 for all others
         }
+        update_slow_reg(tis, slow_reg);
+        cudaMemcpy(
+            d_slow_reg, slow_reg, 2 * sizeof(float), cudaMemcpyHostToDevice);
     }
     if (h_pm.tmode == 4) {  // cut the fin mesh out of a random cloud of cells
-        Mesh tis{"../inits/shape2_mesh_3D.vtk"};
+        Mesh tis{"../inits/fin_init.vtk"};
         tis.rescale(h_pm.tis_s);
         auto tis_min = tis.get_minimum();
         auto tis_max = tis.get_maximum();

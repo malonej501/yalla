@@ -1,13 +1,12 @@
 param,group,type,value,description
 n_max,general,int,200000,Max no. cells
-n_max,general,int,200000,Max no. cells
+wn_max,general,int,100000,Max no. wall nodes
 r_max,general,float,0.1,Max interaction distance betwen two cells
 g_size,general,int,50,Size of grid in which neighbours are searched
 noise,general,float,0.00,Magnitude of noise
 cont_time,general,int,1000,Simulation duration
 dt,general,float,0.1,Time step for Euler integration
 no_frames,general,int,100,No. frames of simulation output to vtk
-tmode,tissue_init,int,5,"condition for initialisation of cells: 0-random disk, 1-regular rectangle, 2-regular rectangle with spot, 3-fin mesh (need 10000 init cells minimum), 4-fin mesh with spot at left, 5-fin mesh with spot at top"
 tmode,tissue_init,int,5,"condition for initialisation of cells: 0-random disk, 1-regular rectangle, 2-regular rectangle with spot, 3-fin mesh (need 10000 init cells minimum), 4-fin mesh with spot at left, 5-fin mesh with spot at top"
 init_dist,tissue_init,float,0.05,mean distance between cells when initialised
 div_dist,tissue_init,float,0.02,distance between parent and child cells
@@ -16,10 +15,10 @@ A_init,tissue_init,int,50,% type 1 cells in initial population
 tis_s,tissue_init,float,1,scale factor for init tissue
 fin_walls,tissue_init,bool,true,activate force walls
 w_off_s,tissue_init,float,1,scale factor for wall offsets (fit with tis_s)
-ray_switch,tissue_init,bool,true,different advection strength between fin rays
-ray_dir,tissue_init,int,1,"ray direction: 0-x, 1-y"
-n_rays,tissue_init,int,3,number of rays
-s_ray,tissue_init,float,0.1,x width of the rays % of the tissue length in ray_dir
+slow_switch,tissue_init,bool,true,different advection strength in slow region
+s_slow,tissue_init,float,0.1,x width of the slow region (as a fraction of total tissue height)
+t_grow_switch,tissue_grow,bool,true,fin growth switch
+t_growth_rate,tissue_grow,float,1.01,fin growth rate (multiplicative)
 mov_switch,migration,bool,true,cell movement switch
 diff_adh_rep,migration,bool,true,differential adhesion and repulsion switch
 rii,migration,float,0.012,A-A repulsion length scale
@@ -31,14 +30,15 @@ Rdd,migration,float,0.0045,Default repulsion strength
 add,migration,float,1,Default adhesion length scale
 Add,advection,float,0,Default adhesion strength
 adv_switch,advection,bool,true,advection switch
-ad_dir,advection,int,1,"advection direction: 0- +x, 1- -y"
+ad_ang,advection,float,50,"advection angle below y=0"
 ad_s,advection,float,0.01,default advection strength
 soft_ad_s,advection,float,0.003,advection strength in inter-rays
 ad_func,advection,int,1,"advection function: 0-constant, 1-linear(starting at left)"
+ad_mult,advection,float,0.3,advection waiting time multiplier - max wait time is this * cont_time
 prolif_switch,proliferation,bool,true,proliferation switch
 pmode,proliferation,int,0,"proliferation rules: 0-no child type switching, 1-B->A switching depending on r_A_birth, 2-A->B switching depending on r_A_birth and if u < uthresh for parent"
-A_div,proliferation,float,0.005,division rate for T1/A cells
-B_div,proliferation,float,0.000001,division rate for T2/B cells
+A_div,proliferation,float,0.02,division rate for T1/A cells
+B_div,proliferation,float,0.003,division rate for T2/B cells
 C_div,proliferation,float,0,division rate for T3/C cells
 r_A_birth,proliferation,float,0.000,chance of type 2 cells producing type 1 cells
 uthresh,proliferation,float,0.03,B/t2 cell children will not spawn as A/t1 if the amount of u exceeds this value
@@ -46,12 +46,13 @@ vthresh,proliferation,float,0.9,B/t2 cells will switch to A/t1 if the amount of 
 mech_thresh,proliferation,float,0.05,max mech_str under which cells can divide
 chem_switch,chemical,bool,true,chemical switch
 cmode,chemical,int,0,"chemical behaviour: 0-production and diffusion, 1-Schnackenberg, 2-Gray-Scott, 3-Gierer Meinhardt"
-k_prod,chemical,float,0.3,production rate of chemical u and v
-k_deg,chemical,float,0.3,degredation rate of chemical u and v
+k_prod,chemical,float,0.1,production rate of chemical u and v
+k_deg,chemical,float,0.01,degredation rate of chemical u and v
 D_u,chemical,float,0.1,Diffusion rate of chemical u
 D_v,chemical,float,0.05,Diffusion rate of chemical v
 a_u,chemical,float,5,Reaction term for chemical u
 b_v,chemical,float,0.001,Reaction term for chemical v
 type_switch,switching,bool,true,switch cell types based on chemical amounts
+u_trans,switching,float,0.2,u threshold for cell type 1 to switch to type 3
 death_switch,death,bool,true,allow cells to die based on chemical amounts
-u_death,death,float,0.6,u threshold for cell type 1 death
+u_death,death,float,0.9,u threshold for cell type 1 death
