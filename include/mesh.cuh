@@ -5,6 +5,7 @@
 #include <math.h>
 #include <thrust/execution_policy.h>
 #include <thrust/reduce.h>
+
 #include <array>
 #include <fstream>
 #include <iostream>
@@ -425,8 +426,7 @@ void Mesh::write_vtk(std::string output_tag)
     assert(mesh_file.is_open());
 
     mesh_file << "# vtk DataFile Version 3.0\n";
-    mesh_file << output_tag + ".mesh"
-              << "\n";
+    mesh_file << output_tag + ".mesh" << "\n";
     mesh_file << "ASCII\n";
     mesh_file << "DATASET POLYDATA\n";
 
