@@ -226,32 +226,6 @@ __global__ void generate_noise(int n, curandState* d_state)
 }
 
 
-__device__ void overwrite_cell(int i, Cell* d_X, int* d_n_cells)
-{
-    printf("overwrite_cell called for cell %d\n", i);
-
-    // Decrement total no. cells, overwrite cell i with last cell in d_X, stop
-    // if only one cell left
-    if (d_cell_type[i] == 1 || d_cell_type[i] == 2) {  // check no 1 or 2
-        printf("ERROR: Tried to overwrite type 1/2 cell at i=%d\n", i);
-    }
-    int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
-    if (i < n) {
-        d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
-        d_W[i] = d_W[n - 1];
-        d_cell_type[i] = d_cell_type[n - 1];
-        d_mech_str[i] = d_mech_str[n - 1];
-        // d_old_v[i] = d_old_v[n - 1];
-        d_in_ray[i] = d_in_ray[n - 1];
-        d_ngs_A[i] = d_ngs_A[n - 1];
-        d_ngs_B[i] = d_ngs_B[n - 1];
-        d_ngs_Ac[i] = d_ngs_Ac[n - 1];
-        d_ngs_Bc[i] = d_ngs_Bc[n - 1];
-        d_ngs_Ad[i] = d_ngs_Ad[n - 1];
-        d_ngs_Bd[i] = d_ngs_Bd[n - 1];
-    }
-}
-
 __global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X,
     float3* d_old_v, int* d_n_cells)
 {
@@ -282,12 +256,28 @@ __global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X,
 
 __global__ void clean_up(int n_cells, Cell* d_X, int* d_n_cells)
 {
-    // remove cells that are not in the tissue mesh
+    // Remove cells that are marked for death by swapping with last cell.
+    // N.B. if n-1 is also dead, a dead cell will remain until the next call,
+    // thus this function is called repeatedly until no dead cells remain.
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
     if (d_cell_type[i] == -1 || d_cell_type[i] == -2) {
-        overwrite_cell(i, d_X, d_n_cells);  // overwrite cell if not in tissue
+        int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
+        if (i < n) {
+            d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
+            d_W[i] = d_W[n - 1];
+            d_cell_type[i] = d_cell_type[n - 1];
+            d_mech_str[i] = d_mech_str[n - 1];
+            // d_old_v[i] = d_old_v[n - 1];
+            d_in_ray[i] = d_in_ray[n - 1];
+            d_ngs_A[i] = d_ngs_A[n - 1];
+            d_ngs_B[i] = d_ngs_B[n - 1];
+            d_ngs_Ac[i] = d_ngs_Ac[n - 1];
+            d_ngs_Bc[i] = d_ngs_Bc[n - 1];
+            d_ngs_Ad[i] = d_ngs_Ad[n - 1];
+            d_ngs_Bd[i] = d_ngs_Bd[n - 1];
+        }
     }
 }
 
@@ -309,20 +299,15 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
             d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.eta      // overcrowding
 
         )
-            d_cell_type[i] = 4;
+            d_cell_type[i] = 1;
     } else if (d_cell_type[i] == -2) {
         if (d_ngs_B[i] > d_pm.phi * d_ngs_A[i] &&    // short range
             d_ngs_Ad[i] > d_pm.psi * d_ngs_Bd[i] &&  // long range
-
-            d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.kappa  // overcrowding
+            d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.kappa   // overcrowding
         )
-            d_cell_type[i] = 5;
+            d_cell_type[i] = 2;
     }
 }
-// printf("Overwriting cell %d\n", i);
-// overwrite_cell(i, d_X, d_n_cells);  // overwrite cell if not
-// proliferating
-
 
 __global__ void death(
     int n_cells, curandState* d_state, Cell* d_X, int* d_n_cells)
@@ -335,18 +320,18 @@ __global__ void death(
     // short-range competition spot cells
     // if spot and non-spot in nbhd exceed spot, die
     if (d_cell_type[i] == 1 and d_ngs_B[i] > d_ngs_A[i]) {
-        overwrite_cell(i, d_X, d_n_cells);
+        d_cell_type[i] = -1;  // mark for death
     }
     // short-range competition non-spot cells
     // if non-spot and no. spot in nbhd  exceeds no. non-spot, die
     if (d_cell_type[i] == 2 and d_ngs_A[i] > d_ngs_B[i]) {
-        overwrite_cell(i, d_X, d_n_cells);
+        d_cell_type[i] = -2;
     }
     // long range spot-cell death condition
     // if spot and no. spot in donut exceeds no. non-spot, die
     if (d_cell_type[i] == 1 and d_ngs_Ad[i] > d_pm.xi * d_ngs_Bd[i] and
         (r > d_pm.q_death)) {
-        overwrite_cell(i, d_X, d_n_cells);
+        d_cell_type[i] = -1;
     }
 }
 
@@ -445,6 +430,8 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
         if (d_pm.ad_dir == 1) d_dX[i].y -= ad;  // -ve y direction
     }
 }
+
+__device__ bool is_dead_type(int type) { return type == -1 || type == -2; }
 
 int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 {
@@ -750,17 +737,17 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                 d_state);  // generate random noise which we will use later
                            // on to move the cells
             if (h_pm.prolif_switch) {
-                cells.take_step<pairwise_force>(0.0, generic_function);
-                proliferation<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
-                    cells.d_n);  // simulate proliferation
-                clean_up<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X, cells.d_n);  // remove cells
-                if (time_step < 1) {
+                if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
                     stage_new_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                         cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
                         cells.d_n);  // stage new cells
                 }
+                cells.take_step<pairwise_force>(0.0, generic_function);
+                proliferation<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                    cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
+                    cells.d_n);  // simulate proliferation
+                // clean_up<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                //     cells.get_d_n(), cells.d_X, cells.d_n);  // remove cells
             }
             if (h_pm.type_switch)
                 cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
@@ -773,10 +760,17 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             if (h_pm.death_switch)
                 death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), d_state, cells.d_X, cells.d_n);
-            // }
+            int prev_n, curr_n;
+            // Remove cells marked for death, repeat until all removed
+            do {
+                prev_n = cells.get_d_n();
+                clean_up<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                    cells.get_d_n(), cells.d_X, cells.d_n);
+                curr_n = cells.get_d_n();
+            } while (curr_n < prev_n);  // Repeat until cell count stabilizes
+        }
 
-            // if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
-
+        if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
             cells.copy_to_host();
             mech_str.copy_to_host();
             cell_type.copy_to_host();
