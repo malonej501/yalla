@@ -82,7 +82,7 @@ def render_movie(walls=False, fin=False):
 
         pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
         wpts = Points([])  # empty points object
-        fmesh = None  # empty mesh object
+        fmesh = Mesh()  # empty mesh object
         if walls:
             wpts = Points(W_VTKS[i]).point_size(PT_SIZE * ZOOM).color("black")
         wnrms = Glyph(wpts, Arrow().scale(0.5), "normals", c="blue")
