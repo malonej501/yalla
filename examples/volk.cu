@@ -30,7 +30,7 @@ MAKE_PT(Cell, u, v);
 
 // define global variables for the GPU
 __device__ float* d_mech_str;
-__device__ int* d_cell_type;  // cell_type: A=1, B=2, DEAD=0
+__device__ int* d_cell_type;  // cell_type: A=1-Iri/Mel, B=2-Xan, DEAD=0
 __device__ Cell* d_W;  // random number from Weiner process for stochasticity
 __device__ bool* d_in_ray;    // whether a cell is in a ray
 __device__ Pm d_pm;           // simulation parameters (host h_pm)
@@ -55,7 +55,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         else
             d_ngs_Bd[i] += 1;
     }
-    if (dist < 0.082) {  // overcrowding region
+    if (dist < 0.075) {  // overcrowding region
         if (d_cell_type[j] == 1)
             d_ngs_Ac[i] += 1;
         else
@@ -170,17 +170,35 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         return dF;  // if cell movement is off, return no forces
 
     // default adhesion and repulsion vals for cell interactions
-    float Adh = d_pm.Add;
-    float adh = d_pm.add;
-    float Rep = d_pm.Rdd;
-    float rep = d_pm.rdd;
+    float Adh = 0;  // d_pm.Add;
+    float adh = 0;  // d_pm.add;
+    float Rep = 0;  // d_pm.Rdd;
+    float rep = 0;  // d_pm.rdd;
 
     if (d_pm.diff_adh_rep) {
+        if (d_cell_type[i] == 1 and d_cell_type[j] == 1) {
+            Adh = 0;  // A-A interact with different adh and rep vals
+            adh = 1;
+            Rep = 0.00124;
+            rep = 0.02;
+        }
         if (d_cell_type[i] == 2 and d_cell_type[j] == 1) {
-            Adh = d_pm.Aii;  // A-A interact with different adh and rep vals
-            adh = d_pm.aii;
-            Rep = d_pm.Rii;
-            rep = d_pm.rii;
+            Adh = 0;  // A-A interact with different adh and rep vals
+            adh = 1;
+            Rep = 0.00274;
+            rep = 0.02;
+        }
+        if (d_cell_type[i] == 1 and d_cell_type[j] == 2) {
+            Adh = 0.001956;  // B-B interact with different adh and rep vals
+            adh = 0.012;
+            Rep = 0.00226;
+            rep = 0.02;
+        }
+        if (d_cell_type[i] == 2 and d_cell_type[j] == 2) {
+            Adh = 0;  // A-B interact with different adh and rep vals
+            adh = 1;
+            Rep = 0.00055;
+            rep = 0.011;
         }
     }
 
@@ -737,7 +755,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                 d_state);  // generate random noise which we will use later
                            // on to move the cells
             if (h_pm.prolif_switch) {
-                if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
+                if (time_step % int(h_pm.cont_time / 500) == 0) {
                     stage_new_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                         cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
                         cells.d_n);  // stage new cells
@@ -757,9 +775,11 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
             cells.take_step<pairwise_force, friction_on_background>(
                 h_pm.dt, generic_function);
-            if (h_pm.death_switch)
-                death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), d_state, cells.d_X, cells.d_n);
+            if (h_pm.death_switch)  // death occurs once per day - 20 days total
+                if (time_step % int(h_pm.cont_time / 20) == 0) {
+                    death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                        cells.get_d_n(), d_state, cells.d_X, cells.d_n);
+                }
             int prev_n, curr_n;
             // Remove cells marked for death, repeat until all removed
             do {
