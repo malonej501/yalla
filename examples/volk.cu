@@ -7,8 +7,10 @@
 // and the specific GPU model you have respectively. e.g. -std=c++14 works for
 // CUDA version 11.6 and -arch=sm_86 corresponds to the generation of NVIDIA
 // Geforce 30XX cards.
+#include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/remove.h>
+#include <thrust/scan.h>
 
 #include <iterator>
 #include <regex>
@@ -73,8 +75,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     if (dist > d_pm.r_max)  // dist = norm3df(r.x, r.y, r.z) solvers line 308
         return dF;          // cutoff for chemical and mechanical interaction
 
-    if (d_cell_type[i] == -1 || d_cell_type[j] == -1 || d_cell_type[i] == -2 ||
-        d_cell_type[j] == -2) {
+    if (d_cell_type[i] < 0 || d_cell_type[j] < 0) {
         return dF;  // cells in staging area have no interactions
     }
 
@@ -247,7 +248,7 @@ __global__ void generate_noise(int n, curandState* d_state)
 
 
 __global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X,
-    float3* d_old_v, int* d_n_cells)
+    float3* d_old_v, int* d_n_cells, Mesh_d wall_mesh)
 {
     int i = blockIdx.x * blockDim.x +
             threadIdx.x;  // get the index of the current cell
@@ -269,9 +270,9 @@ __global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X,
         // d_cell_type[n] = -1;
         d_cell_type[n] = (i < (d_pm.n_new_cells / 2)) ? -1 : -2;
         // Remove if outside mesh
-        // if (test_exclusion(fin_mesh, d_X[n])) {
-        //     d_cell_type[n] = -99;  // Mark for removal
-        // }
+        if (test_exclusion(wall_mesh, d_X[n])) {
+            d_cell_type[n] = -99;  // Mark for removal
+        }
     }
 }
 
@@ -283,7 +284,7 @@ __global__ void clean_up(int n_cells, Cell* d_X, int* d_n_cells)
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
-    if (d_cell_type[i] == -1 || d_cell_type[i] == -2) {
+    if (d_cell_type[i] < 0) {             // if the cell is marked for removal
         int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
         if (i < n) {
             d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
@@ -303,7 +304,7 @@ __global__ void clean_up(int n_cells, Cell* d_X, int* d_n_cells)
 }
 
 __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
-    float3* d_old_v, int* d_n_cells)
+    float3* d_old_v, int* d_n_cells, Mesh_d wall_mesh)
 {
     // change cells from staging to active types if conditions are met
     int i = blockIdx.x * blockDim.x + threadIdx.x;  // index of current cell
@@ -447,6 +448,8 @@ __global__ void wall_forces_new(
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
+    if (d_cell_type[i] < 0) return;  // no wall forces for staging cells
+
     float min_dist2 = 1e30f;
     float3 closest_nm;
     for (int j = 0; j < wall_mesh.n_facets; ++j) {
@@ -472,7 +475,7 @@ __global__ void wall_forces_new(
     // }
     bool outside = test_exclusion(wall_mesh, d_X[i]);
     if (outside) {
-        auto F_mag = sqrtf(min_dist2) * 20;  // force magnitude
+        auto F_mag = fminf(sqrtf(min_dist2) * 20, 1.0f);  // force magnitude
         d_dX[i].x +=
             closest_nm.x * F_mag;  // force is product of displ and norm vec
         d_dX[i].y += closest_nm.y * F_mag;
@@ -498,6 +501,138 @@ int extract_number(const std::string& filename)
     std::smatch match;
     if (std::regex_search(filename, match, re)) { return std::stoi(match[1]); }
     return -1;  // or throw/handle error
+}
+
+__global__ void mark_live_cells(
+    const int* d_cell_type, int* d_flags, int n_cells)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n_cells) { d_flags[i] = (d_cell_type[i] >= 0) ? 1 : 0; }
+}
+
+// 2. Scatter live cells to compact arrays
+__global__ void scatter_live_cells(const Cell* d_X_in, Cell* d_X_out,
+    const Cell* d_W_in, Cell* d_W_out, const int* d_cell_type_in,
+    int* d_cell_type_out, const float* d_mech_str_in, float* d_mech_str_out,
+    const bool* d_in_slow_in, bool* d_in_slow_out, const int* d_ngs_A_in,
+    int* d_ngs_A_out, const int* d_ngs_B_in, int* d_ngs_B_out,
+    const int* d_ngs_Ac_in, int* d_ngs_Ac_out, const int* d_ngs_Bc_in,
+    int* d_ngs_Bc_out, const int* d_ngs_Ad_in, int* d_ngs_Ad_out,
+    const int* d_ngs_Bd_in, int* d_ngs_Bd_out, const int* d_flags,
+    const int* d_scan, int n_cells)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n_cells && d_flags[i]) {
+        int new_idx = d_scan[i];
+        d_X_out[new_idx] = d_X_in[i];
+        d_W_out[new_idx] = d_W_in[i];
+        d_cell_type_out[new_idx] = d_cell_type_in[i];
+        d_mech_str_out[new_idx] = d_mech_str_in[i];
+        d_in_slow_out[new_idx] = d_in_slow_in[i];
+        d_ngs_A_out[new_idx] = d_ngs_A_in[i];
+        d_ngs_B_out[new_idx] = d_ngs_B_in[i];
+        d_ngs_Ac_out[new_idx] = d_ngs_Ac_in[i];
+        d_ngs_Bc_out[new_idx] = d_ngs_Bc_in[i];
+        d_ngs_Ad_out[new_idx] = d_ngs_Ad_in[i];
+        d_ngs_Bd_out[new_idx] = d_ngs_Bd_in[i];
+    }
+}
+
+
+void compact_cells(int n_cells, Cell* d_X, Cell* d_W, int* d_cell_type,
+    float* d_mech_str, bool* d_in_slow, int* d_ngs_A, int* d_ngs_B,
+    int* d_ngs_Ac, int* d_ngs_Bc, int* d_ngs_Ad, int* d_ngs_Bd, int* d_n_cells)
+{
+    // Allocate temp arrays
+    thrust::device_vector<int> d_flags(n_cells);
+    thrust::device_vector<int> d_scan(n_cells);
+
+    // Mark live cells
+    mark_live_cells<<<(n_cells + 127) / 128, 128>>>(
+        d_cell_type, thrust::raw_pointer_cast(d_flags.data()), n_cells);
+
+    // Scan to get new indices
+    thrust::exclusive_scan(
+        thrust::device, d_flags.begin(), d_flags.end(), d_scan.begin());
+
+    // Get new cell count
+    int last_flag = 0, new_n = 0;
+    cudaMemcpy(&last_flag,
+        thrust::raw_pointer_cast(d_flags.data()) + n_cells - 1, sizeof(int),
+        cudaMemcpyDeviceToHost);
+    cudaMemcpy(&new_n, thrust::raw_pointer_cast(d_scan.data()) + n_cells - 1,
+        sizeof(int), cudaMemcpyDeviceToHost);
+    new_n += last_flag;
+
+    // Allocate output arrays
+    Cell* d_X_out;
+    cudaMalloc(&d_X_out, new_n * sizeof(Cell));
+    Cell* d_W_out;
+    cudaMalloc(&d_W_out, new_n * sizeof(Cell));
+    int* d_cell_type_out;
+    cudaMalloc(&d_cell_type_out, new_n * sizeof(int));
+    float* d_mech_str_out;
+    cudaMalloc(&d_mech_str_out, new_n * sizeof(float));
+    bool* d_in_slow_out;
+    cudaMalloc(&d_in_slow_out, new_n * sizeof(bool));
+    int* d_ngs_A_out;
+    cudaMalloc(&d_ngs_A_out, new_n * sizeof(int));
+    int* d_ngs_B_out;
+    cudaMalloc(&d_ngs_B_out, new_n * sizeof(int));
+    int* d_ngs_Ac_out;
+    cudaMalloc(&d_ngs_Ac_out, new_n * sizeof(int));
+    int* d_ngs_Bc_out;
+    cudaMalloc(&d_ngs_Bc_out, new_n * sizeof(int));
+    int* d_ngs_Ad_out;
+    cudaMalloc(&d_ngs_Ad_out, new_n * sizeof(int));
+    int* d_ngs_Bd_out;
+    cudaMalloc(&d_ngs_Bd_out, new_n * sizeof(int));
+
+    // Scatter live cells
+    scatter_live_cells<<<(n_cells + 127) / 128, 128>>>(d_X, d_X_out, d_W,
+        d_W_out, d_cell_type, d_cell_type_out, d_mech_str, d_mech_str_out,
+        d_in_slow, d_in_slow_out, d_ngs_A, d_ngs_A_out, d_ngs_B, d_ngs_B_out,
+        d_ngs_Ac, d_ngs_Ac_out, d_ngs_Bc, d_ngs_Bc_out, d_ngs_Ad, d_ngs_Ad_out,
+        d_ngs_Bd, d_ngs_Bd_out, thrust::raw_pointer_cast(d_flags.data()),
+        thrust::raw_pointer_cast(d_scan.data()), n_cells);
+
+    // Copy output arrays back
+    cudaMemcpy(d_X, d_X_out, new_n * sizeof(Cell), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(d_W, d_W_out, new_n * sizeof(Cell), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(d_cell_type, d_cell_type_out, new_n * sizeof(int),
+        cudaMemcpyDeviceToDevice);
+    cudaMemcpy(d_mech_str, d_mech_str_out, new_n * sizeof(float),
+        cudaMemcpyDeviceToDevice);
+    cudaMemcpy(d_in_slow, d_in_slow_out, new_n * sizeof(bool),
+        cudaMemcpyDeviceToDevice);
+    cudaMemcpy(
+        d_ngs_A, d_ngs_A_out, new_n * sizeof(int), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(
+        d_ngs_B, d_ngs_B_out, new_n * sizeof(int), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(
+        d_ngs_Ac, d_ngs_Ac_out, new_n * sizeof(int), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(
+        d_ngs_Bc, d_ngs_Bc_out, new_n * sizeof(int), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(
+        d_ngs_Ad, d_ngs_Ad_out, new_n * sizeof(int), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(
+        d_ngs_Bd, d_ngs_Bd_out, new_n * sizeof(int), cudaMemcpyDeviceToDevice);
+
+    // Update cell count
+    cudaMemcpy(d_n_cells, &new_n, sizeof(int), cudaMemcpyHostToDevice);
+
+    // Free temp arrays
+    cudaFree(d_X_out);
+    cudaFree(d_W_out);
+    cudaFree(d_cell_type_out);
+    cudaFree(d_mech_str_out);
+    cudaFree(d_in_slow_out);
+    cudaFree(d_ngs_A_out);
+    cudaFree(d_ngs_B_out);
+    cudaFree(d_ngs_Ac_out);
+    cudaFree(d_ngs_Bc_out);
+    cudaFree(d_ngs_Ad_out);
+    cudaFree(d_ngs_Bd_out);
 }
 
 
@@ -789,17 +924,21 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
+        if (h_pm.t_grow_switch && time_step > 0 && time_step % 10 == 0) {
+            fin.grow(h_pm.t_growth_rate);  // grow the fin by 10% every
+            float3 tis_min = fin.get_minimum();
+            float3 tis_max = fin.get_maximum();
+            cudaMemcpyToSymbol(d_tis_min, &tis_min, sizeof(float3));
+            cudaMemcpyToSymbol(d_tis_max, &tis_max, sizeof(float3));
+            // 10 timesteps
+            grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                cells.get_d_n(), cells.d_X, h_pm.t_growth_rate);
+            update_slow_reg(fin, slow_reg);
+            cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
+                cudaMemcpyHostToDevice);  // copy to device
+        }
         for (float T = 0.0; T < 1.0; T += h_pm.dt) {
             // printf("T = %f\n", T);
-            if (h_pm.t_grow_switch) {
-                fin.grow(h_pm.t_growth_rate);  // grow the fin by 10% every
-                // 10 timesteps
-                grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X, h_pm.t_growth_rate);
-                update_slow_reg(fin, slow_reg);
-                cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
-                    cudaMemcpyHostToDevice);  // copy to device
-            }
             generate_noise<<<(cells.get_d_n() + 32 - 1) / 32, 32>>>(
                 cells.get_d_n(),
                 d_state);  // generate random noise which we will use later
@@ -808,34 +947,38 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                 if (time_step % int(h_pm.cont_time / 500) == 0) {
                     stage_new_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                         cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
-                        cells.d_n);  // stage new cells
+                        cells.d_n, fin.mesh);  // stage new cells
                 }
                 cells.take_step<pairwise_force>(0.0, generic_function);
                 proliferation<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
-                    cells.d_n);  // simulate proliferation
+                    cells.d_n, fin.mesh);  // simulate proliferation
             }
             if (h_pm.type_switch)
                 cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), cells.d_X);  // switch cell types if
-            // conditions are met
+                                                  // conditions are met
 
-
-            cells.take_step<pairwise_force, friction_on_background>(
-                h_pm.dt, generic_function);
             if (h_pm.death_switch)  // death occurs once per day - 20 days total
                 if (time_step % int(h_pm.cont_time / 20) == 0) {
                     death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                         cells.get_d_n(), d_state, cells.d_X, cells.d_n);
                 }
-            int prev_n, curr_n;
             // Remove cells marked for death, repeat until all removed
-            do {
-                prev_n = cells.get_d_n();
-                clean_up<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X, cells.d_n);
-                curr_n = cells.get_d_n();
-            } while (curr_n < prev_n);  // Repeat until cell count stabilizes
+            // int prev_n, curr_n;
+            // do {
+            //     prev_n = cells.get_d_n();
+            //     clean_up<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+            //         cells.get_d_n(), cells.d_X, cells.d_n);
+            //     curr_n = cells.get_d_n();
+            // } while (curr_n < prev_n);  // Repeat until cell count stabilizes
+            compact_cells(cells.get_d_n(), cells.d_X, W.d_prop,
+                cell_type.d_prop, mech_str.d_prop, in_slow.d_prop, ngs_A.d_prop,
+                ngs_B.d_prop, ngs_Ac.d_prop, ngs_Bc.d_prop, ngs_Ad.d_prop,
+                ngs_Bd.d_prop, cells.d_n);
+
+            cells.take_step<pairwise_force, friction_on_background>(
+                h_pm.dt, generic_function);
         }
 
         if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
