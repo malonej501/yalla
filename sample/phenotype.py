@@ -1,4 +1,5 @@
 import os
+import sys
 import math
 import numpy as np
 import pandas as pd
@@ -18,6 +19,9 @@ from PIL import Image
 
 matplotlib.use("pgf")
 plt.style.use("../misc/stylesheet.mplstyle")
+
+FUNC = 0
+WD = "../run/saves/"
 
 
 class Frame():
@@ -309,13 +313,15 @@ def plot_segmented_fins(fin_dir="../data"):
             fin.plot_regions(display=False, export=True)
 
 
-def compare_segmented_real(fin_dir="../data", export=False, mode=0):
+def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
+                           mode=0, nplot=0):
     """Plot segmented and real fins side by side.
     Args:
         fin_dir     directory containing the .h5 files of segmented fins.
         export      if True, saves the figure as a PDF.
         mode        0 segmented vs real
                     1 segmented + mesh vs real
+        nplot       number of files to plot, if 0 all files are plotted.
     """
     hfiles = [f for f in os.listdir(fin_dir) if f.endswith(".h5")]
     pngs = [f.replace("_Simple Segmentation", "").replace(".h5", ".png")
@@ -325,10 +331,10 @@ def compare_segmented_real(fin_dir="../data", export=False, mode=0):
     if n == 0:
         print("No .h5 files found.")
         return
-    ncol = 4
-    nrow = math.ceil(n / ncol)
+    ncol = 1
+    nrow = math.ceil(n / ncol) if nplot == 0 else math.ceil(nplot / ncol)
     _, axs = plt.subplots(nrow, ncol * 2, figsize=(
-        4*ncol, 1.5 * nrow), layout="constrained")
+        1.5*ncol, 0.5 * nrow), layout="constrained")
 
     if n == 1:
         axs = [axs]  # Ensure axs is always iterable as a list of pairs
@@ -348,8 +354,10 @@ def compare_segmented_real(fin_dir="../data", export=False, mode=0):
         axs[row][col + 1].set_title("")
         axs[row][col + 1].set_xticks([])
         axs[row][col + 1].set_yticks([])
+        if nplot > 0 and i + 1 >= nplot:  # stop if reached nplot
+            break
     if export:
-        plt.savefig(f"../data/real_seg_comp_{n}_{mode}.pdf", dpi=300)
+        plt.savefig(f"real_seg_comp_{n}_{mode}.pdf", dpi=300)
 
     plt.show()
 
@@ -393,15 +401,20 @@ def plot_sim_tseries_vedo(run_id, n_frames, axes=False):
     p.interactive().close()
 
 
-def plot_sim_tseries_mtpl(run_id, n_frames):
+def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2):
     """Plot a course time series of simulation frames using matplotlib."""
     cell_types = tissue_properties(run_id)
     frames = np.linspace(0, 100, n_frames, dtype=int)
+    # frames = np.linspace(10, 70, n_frames, dtype=int)  # for wall-penetrating
     print(frames)
     ctypes = {1: "Spot-migratory", 2: "Non-spot", 3: "Spot-static"}
 
-    fig, axs = plt.subplots(2, 3, figsize=(6, 3),
-                            layout="constrained")
+    if nrow == 1:
+        fig, axs = plt.subplots(1, 6, figsize=(10, 1.5),
+                                layout="constrained", sharex=True, sharey=True)
+    else:
+        fig, axs = plt.subplots(2, 3, figsize=(6, 3),
+                                layout="constrained", sharex=True, sharey=True)
     axs = axs.flatten()
 
     for i, fr in enumerate(frames):
@@ -410,9 +423,6 @@ def plot_sim_tseries_mtpl(run_id, n_frames):
                   "y": frame.mesh.vertices[:, 1],
                   "type": frame.mesh.pointdata["cell_type"]}
         fr_dat = pd.DataFrame(fr_dat)
-        # sc = axs[i].scatter(fr_dat["x"], fr_dat["y"], c=fr_dat["type"],
-        #                     s=1, cmap="viridis",
-        #                     vmin=cell_types.min(), vmax=cell_types.max())
         for ctype in fr_dat["type"].unique():
             mask = fr_dat["type"] == ctype
             axs[i].scatter(fr_dat["x"][mask], fr_dat["y"][mask], s=1,
@@ -427,7 +437,8 @@ def plot_sim_tseries_mtpl(run_id, n_frames):
         axs[i].axis("off")
 
     # fig.colorbar(sc, ax=axs, label="Cell Type", orientation="vertical")
-    leg = fig.legend(*axs[3].get_legend_handles_labels(), loc="outside lower center",
+    leg = fig.legend(*axs[3].get_legend_handles_labels(),
+                     loc="outside lower center",
                      title="Cell Type", ncol=3)
     for handle in leg.legend_handles:
         handle.set_sizes([30])
@@ -439,13 +450,52 @@ def plot_sim_tseries_mtpl(run_id, n_frames):
     plt.show()
 
 
+def print_help():
+    help_text = """
+    Usage: python phenotype.py [options]
+    
+    Options:
+        -h              Show this help message and exit.
+        -f [function]  Specify the function to run. Options include:
+                       0 ...analyse_realfins
+                       1 ...plot_sim_tseries_vedo
+                       2 ...plot_sim_tseries_mtpl
+                       3 ...plot_segmented_fins
+                       4 ...compare_segmented_real
+        -d [directory] Specify the directory contining data to plot.
+
+    Description:
+        This script provides functionalities to analyze and visualize 
+        phenotypes of tissue simulations and real fin data. It includes 
+        classes for handling simulation frames and real fin data, as well 
+        as functions for plotting time series and comparing segmented 
+        and real fins.
+    """
+    print(help_text)
+
+
 if __name__ == "__main__":
-    # analyse_realfins()
-    # plot_sim_tseries_vedo("../run/saves/li_adv_new_lenscales_01-06-25", 6)
-    # plot_sim_tseries_mtpl("../run/saves/li_adv_new_lenscales_01-06-25", 6)
-    # plot_sim_tseries_mtpl("../run/saves/wall_penetrating_tseries_15-09-25", 6)
+    # collect bash arguments
+    args = sys.argv[1:]
+    if "-h" in args:
+        print_help()
+    if "-d" in args:
+        WD = args[args.index("-d") + 1].rstrip("/")
+    if "-f" in args:
+        FUNC = int(args[args.index("-f") + 1])
+        if FUNC == 0:
+            analyse_realfins()
+        elif FUNC == 1:
+            plot_sim_tseries_vedo(WD, 6)
+        elif FUNC == 2:
+            plot_sim_tseries_mtpl(WD, 6)
+        elif FUNC == 3:
+            plot_segmented_fins()
+        elif FUNC == 4:
+            compare_segmented_real()
     # plot_segmented_fins()
-    # compare_segmented_real(export=True, mode=1)
+    # compare_segmented_real(
+    #     fin_dir="../data/data_23-06-25", export=True, mode=1, nplot=2)
     # Realfin(path="../data/1_13-10-22_Simple Segmentation.h5").mesh(True)
     # Realfin(path="../data/Taeniolethrinops_laticeps_'Tsano_Rock'_Simple Segmentation.h5").mesh(True)
     # Realfin(path="../data/Mchenga_cyclicos_'Msuli'_Simple Segmentation.h5").mesh(True)
