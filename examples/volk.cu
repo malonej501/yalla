@@ -182,26 +182,26 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         if (d_cell_type[i] == 1 and d_cell_type[j] == 1) {
             Adh = 0;  // A-A interact with different adh and rep vals
             adh = 1;
-            Rep = 0.00124;
-            rep = 0.02;
+            Rep = 0.01 / 5;
+            rep = 0.04;  // /5 because t=0.2*day
         }
         if (d_cell_type[i] == 2 and d_cell_type[j] == 1) {
             Adh = 0;  // A-A interact with different adh and rep vals
             adh = 1;
-            Rep = 0.00274;
-            rep = 0.02;
+            Rep = 0.02 / 5;
+            rep = 0.05;
         }
         if (d_cell_type[i] == 1 and d_cell_type[j] == 2) {
-            Adh = 0.001956;  // B-B interact with different adh and rep vals
-            adh = 0.012;
-            Rep = 0.00226;
-            rep = 0.02;
+            Adh = 0;  // B-B interact with different adh and rep vals
+            adh = 1;
+            Rep = 0.02 / 5;
+            rep = 0.05;
         }
         if (d_cell_type[i] == 2 and d_cell_type[j] == 2) {
             Adh = 0;  // A-B interact with different adh and rep vals
             adh = 1;
-            Rep = 0.00055;
-            rep = 0.011;
+            Rep = 0.02 / 5;
+            rep = 0.05;
         }
     }
 
@@ -212,10 +212,13 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // sqrt(r.x^2 + r.y^2)) - (Rep * r.x * exp(-sqrt(r.x^2 - r.y^2) / rep) /
     // (rep * sqrt(r.x^2 - r.y^2))); Volkening et al. 2015 force potential,
     // function in terms of distance in n dimensions
-    float term1 = Adh / adh * expf(-dist / adh);
-    float term2 = Rep / rep * expf(-dist / rep);
-    float F = term1 - term2;
-    // printf("%f\n", F);
+    // float term1 = Adh / adh * expf(-dist / adh);
+    // float term2 = Rep / rep * expf(-dist / rep);
+    // float F = term1 - term2;
+
+    // Volkening 2018
+    float F = -Rep * (0.5f + 0.5f * tanhf((rep - dist) * 100));
+
     d_mech_str[i] -= F;  // mechanical strain is the sum of forces on the cell
 
     dF.x -= r.x * F / dist;
@@ -503,143 +506,6 @@ int extract_number(const std::string& filename)
     return -1;  // or throw/handle error
 }
 
-// __global__ void mark_live_cells(
-//     const int* d_cell_type, int* d_flags, int n_cells)
-// {
-//     int i = blockIdx.x * blockDim.x + threadIdx.x;
-//     if (i < n_cells) { d_flags[i] = (d_cell_type[i] >= 0) ? 1 : 0; }
-// }
-
-// // 2. Scatter live cells to compact arrays
-// __global__ void scatter_live_cells(const Cell* d_X_in, Cell* d_X_out,
-//     const Cell* d_W_in, Cell* d_W_out, const int* d_cell_type_in,
-//     int* d_cell_type_out, const float* d_mech_str_in, float* d_mech_str_out,
-//     const bool* d_in_slow_in, bool* d_in_slow_out, const int* d_ngs_A_in,
-//     int* d_ngs_A_out, const int* d_ngs_B_in, int* d_ngs_B_out,
-//     const int* d_ngs_Ac_in, int* d_ngs_Ac_out, const int* d_ngs_Bc_in,
-//     int* d_ngs_Bc_out, const int* d_ngs_Ad_in, int* d_ngs_Ad_out,
-//     const int* d_ngs_Bd_in, int* d_ngs_Bd_out, const int* d_flags,
-//     const int* d_scan, int n_cells)
-// {
-//     int i = blockIdx.x * blockDim.x + threadIdx.x;
-//     if (i < n_cells && d_flags[i]) {
-//         int new_idx = d_scan[i];
-//         d_X_out[new_idx] = d_X_in[i];
-//         d_W_out[new_idx] = d_W_in[i];
-//         d_cell_type_out[new_idx] = d_cell_type_in[i];
-//         d_mech_str_out[new_idx] = d_mech_str_in[i];
-//         d_in_slow_out[new_idx] = d_in_slow_in[i];
-//         d_ngs_A_out[new_idx] = d_ngs_A_in[i];
-//         d_ngs_B_out[new_idx] = d_ngs_B_in[i];
-//         d_ngs_Ac_out[new_idx] = d_ngs_Ac_in[i];
-//         d_ngs_Bc_out[new_idx] = d_ngs_Bc_in[i];
-//         d_ngs_Ad_out[new_idx] = d_ngs_Ad_in[i];
-//         d_ngs_Bd_out[new_idx] = d_ngs_Bd_in[i];
-//     }
-// }
-
-
-// void compact_cells(int n_cells, Cell* d_X, Cell* d_W, int* d_cell_type,
-//     float* d_mech_str, bool* d_in_slow, int* d_ngs_A, int* d_ngs_B,
-//     int* d_ngs_Ac, int* d_ngs_Bc, int* d_ngs_Ad, int* d_ngs_Bd, int*
-//     d_n_cells)
-// {
-//     // Allocate temp arrays
-//     thrust::device_vector<int> d_flags(n_cells);
-//     thrust::device_vector<int> d_scan(n_cells);
-
-//     // Mark live cells
-//     mark_live_cells<<<(n_cells + 127) / 128, 128>>>(
-//         d_cell_type, thrust::raw_pointer_cast(d_flags.data()), n_cells);
-
-//     // Scan to get new indices
-//     thrust::exclusive_scan(
-//         thrust::device, d_flags.begin(), d_flags.end(), d_scan.begin());
-
-//     // Get new cell count
-//     int last_flag = 0, new_n = 0;
-//     cudaMemcpy(&last_flag,
-//         thrust::raw_pointer_cast(d_flags.data()) + n_cells - 1, sizeof(int),
-//         cudaMemcpyDeviceToHost);
-//     cudaMemcpy(&new_n, thrust::raw_pointer_cast(d_scan.data()) + n_cells - 1,
-//         sizeof(int), cudaMemcpyDeviceToHost);
-//     new_n += last_flag;
-
-//     // Allocate output arrays
-//     Cell* d_X_out;
-//     cudaMalloc(&d_X_out, new_n * sizeof(Cell));
-//     Cell* d_W_out;
-//     cudaMalloc(&d_W_out, new_n * sizeof(Cell));
-//     int* d_cell_type_out;
-//     cudaMalloc(&d_cell_type_out, new_n * sizeof(int));
-//     float* d_mech_str_out;
-//     cudaMalloc(&d_mech_str_out, new_n * sizeof(float));
-//     bool* d_in_slow_out;
-//     cudaMalloc(&d_in_slow_out, new_n * sizeof(bool));
-//     int* d_ngs_A_out;
-//     cudaMalloc(&d_ngs_A_out, new_n * sizeof(int));
-//     int* d_ngs_B_out;
-//     cudaMalloc(&d_ngs_B_out, new_n * sizeof(int));
-//     int* d_ngs_Ac_out;
-//     cudaMalloc(&d_ngs_Ac_out, new_n * sizeof(int));
-//     int* d_ngs_Bc_out;
-//     cudaMalloc(&d_ngs_Bc_out, new_n * sizeof(int));
-//     int* d_ngs_Ad_out;
-//     cudaMalloc(&d_ngs_Ad_out, new_n * sizeof(int));
-//     int* d_ngs_Bd_out;
-//     cudaMalloc(&d_ngs_Bd_out, new_n * sizeof(int));
-
-//     // Scatter live cells
-//     scatter_live_cells<<<(n_cells + 127) / 128, 128>>>(d_X, d_X_out, d_W,
-//         d_W_out, d_cell_type, d_cell_type_out, d_mech_str, d_mech_str_out,
-//         d_in_slow, d_in_slow_out, d_ngs_A, d_ngs_A_out, d_ngs_B, d_ngs_B_out,
-//         d_ngs_Ac, d_ngs_Ac_out, d_ngs_Bc, d_ngs_Bc_out, d_ngs_Ad,
-//         d_ngs_Ad_out, d_ngs_Bd, d_ngs_Bd_out,
-//         thrust::raw_pointer_cast(d_flags.data()),
-//         thrust::raw_pointer_cast(d_scan.data()), n_cells);
-
-//     // Copy output arrays back
-//     cudaMemcpy(d_X, d_X_out, new_n * sizeof(Cell), cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(d_W, d_W_out, new_n * sizeof(Cell), cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(d_cell_type, d_cell_type_out, new_n * sizeof(int),
-//         cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(d_mech_str, d_mech_str_out, new_n * sizeof(float),
-//         cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(d_in_slow, d_in_slow_out, new_n * sizeof(bool),
-//         cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(
-//         d_ngs_A, d_ngs_A_out, new_n * sizeof(int), cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(
-//         d_ngs_B, d_ngs_B_out, new_n * sizeof(int), cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(
-//         d_ngs_Ac, d_ngs_Ac_out, new_n * sizeof(int),
-//         cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(
-//         d_ngs_Bc, d_ngs_Bc_out, new_n * sizeof(int),
-//         cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(
-//         d_ngs_Ad, d_ngs_Ad_out, new_n * sizeof(int),
-//         cudaMemcpyDeviceToDevice);
-//     cudaMemcpy(
-//         d_ngs_Bd, d_ngs_Bd_out, new_n * sizeof(int),
-//         cudaMemcpyDeviceToDevice);
-
-//     // Update cell count
-//     cudaMemcpy(d_n_cells, &new_n, sizeof(int), cudaMemcpyHostToDevice);
-
-//     // Free temp arrays
-//     cudaFree(d_X_out);
-//     cudaFree(d_W_out);
-//     cudaFree(d_cell_type_out);
-//     cudaFree(d_mech_str_out);
-//     cudaFree(d_in_slow_out);
-//     cudaFree(d_ngs_A_out);
-//     cudaFree(d_ngs_B_out);
-//     cudaFree(d_ngs_Ac_out);
-//     cudaFree(d_ngs_Bc_out);
-//     cudaFree(d_ngs_Ad_out);
-//     cudaFree(d_ngs_Bd_out);
-// }
 // Predicate for dead cells
 struct is_dead {
     __host__ __device__ bool operator()(const thrust::tuple<int>& t) const
@@ -1005,10 +871,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             //         cells.get_d_n(), cells.d_X, cells.d_n);
             //     curr_n = cells.get_d_n();
             // } while (curr_n < prev_n);  // Repeat until cell count stabilizes
-            // compact_cells(cells.get_d_n(), cells.d_X, W.d_prop,
-            //     cell_type.d_prop, mech_str.d_prop, in_slow.d_prop,
-            //     ngs_A.d_prop, ngs_B.d_prop, ngs_Ac.d_prop, ngs_Bc.d_prop,
-            //     ngs_Ad.d_prop, ngs_Bd.d_prop, cells.d_n);
             compact_cells_with_remove_if(cells.get_d_n(), cells.d_X, W.d_prop,
                 cell_type.d_prop, mech_str.d_prop, in_slow.d_prop, ngs_A.d_prop,
                 ngs_B.d_prop, ngs_Ac.d_prop, ngs_Bc.d_prop, ngs_Ad.d_prop,
