@@ -3,11 +3,17 @@
 import os
 import pandas as pd
 import cv2
+import matplotlib
 from matplotlib import pyplot as plt
 import matplotlib.dates as mdates
 from vedo import *
 import datetime
 import statsmodels.formula.api as smf
+from PIL import Image
+
+matplotlib.use("pgf")
+plt.style.use("../misc/stylesheet.mplstyle")
+
 
 START_FROM = 171  # index of image to start from when landmarking
 
@@ -506,8 +512,8 @@ def visualise_landmarks_layered(dir_path, text=False, norm=False):
     cmap = plt.cm.get_cmap("viridis")
 
     # fish_id is columns, stage is rows
-    fig, axs = plt.subplots(figsize=(16, 8), nrows=4, ncols=3,
-                            # sharex=True, sharey=True,
+    fig, axs = plt.subplots(figsize=(5, 5), nrows=5, ncols=2,
+                            sharex=True, sharey=True,
                             layout="constrained")
 
     for i, stage in enumerate(sorted(vtks["stage"].unique())):
@@ -581,6 +587,8 @@ def visualise_landmarks_layered(dir_path, text=False, norm=False):
             ax.set_aspect("equal")
             ax.set_xlim(x_min, x_max)
             ax.set_ylim(y_min, y_max)
+            # ax.set_face
+            # color("gray")
             # ax.invert_yaxis()
 
     fig.supxlabel('X (mm)')
@@ -594,7 +602,7 @@ def visualise_landmarks_layered(dir_path, text=False, norm=False):
         if not ax.has_data():
             ax.axis("off")  # switch off unused subplots
 
-    # plt.savefig(f"{dir_path}_{suffix}.png", dpi=600)
+    plt.savefig(f"{dir_path}_{suffix}.svg")
     plt.show()
 
 
@@ -778,6 +786,29 @@ def ap_len_over_time(path):
             transform=ax.transAxes, va='bottom', ha="left")
     plt.show()
 
+
+def compress_pngs(dir_name):
+    """Compress all PNG files in the specified directory using optipng."""
+    png_files = [f for f in os.listdir(dir_name) if f.endswith('.png')]
+    src_dir = dir_name
+    dst_dir = dir_name + "_compressed"
+    os.makedirs(dst_dir, exist_ok=True)
+
+    sf = 0.1  # scale factor
+
+    for fname in os.listdir(src_dir):
+        if fname.lower().endswith(".png"):
+            src_path = os.path.join(src_dir, fname)
+            jpg_fname = os.path.splitext(fname)[0] + ".jpg"
+            dst_path = os.path.join(dst_dir, jpg_fname)
+            img = Image.open(src_path)
+            w, h = img.size
+            print(f"Resizing {fname} from {w}x{h} to "
+                  + f"{int(w*sf)}x{int(h*sf)}")
+            img = img.resize((int(w * sf), int(h * sf)), Image.LANCZOS)
+            img = img.convert("RGB")  # JPEG does not support transparency
+            img.save(dst_path, "JPEG", optimize=True, quality=95)
+
 # def get_wallnorms(lmks, spacing=0.01):
 #     """Compute midpoint of mesh line segements and associated
 #     normal vector facing away from the mesh interior.
@@ -843,5 +874,6 @@ if __name__ == "__main__":
 
     # landmarks_to_vtk("lmks_all/lmks.csv")
     # visualise_landmark_vtks("lmks_all")
-    visualise_landmarks_layered("lmks_all")
+    # visualise_landmarks_layered("lmks_all")
+    compress_pngs("adult_benthic_all_images")
     # ap_len_over_time("lmks_all/lmks.csv")
