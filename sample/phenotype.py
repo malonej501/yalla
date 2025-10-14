@@ -17,8 +17,8 @@ from skimage.color import label2rgb
 from scipy.spatial import Delaunay, ConvexHull
 from PIL import Image
 
-matplotlib.use("pgf")
-plt.style.use("../misc/stylesheet.mplstyle")
+# matplotlib.use("pgf")
+# plt.style.use("../misc/stylesheet.mplstyle")
 
 FUNC = 0
 WD = "../run/saves/"
@@ -45,10 +45,10 @@ class Frame():
             "n_clusters": 0,
             "n_noise_pts": 0,
             "n_polygons": 0,
-            "mean_area": np.nan,
-            "std_area": np.nan,
-            "mean_roundness": np.nan,
-            "std_roundness": np.nan
+            "mean_spot_area_mm^2": np.nan,
+            "std_spot_area_mm^2": np.nan,
+            "mean_spot_roundness": np.nan,
+            "std_spot_roundness": np.nan
         }
         # return positions of spot cells - both mobile and static
         x_spots = self.mesh.vertices[
@@ -103,7 +103,7 @@ class Frame():
         stats["n_polygons"] = n_poly
         stats["mean_area"] = np.mean(areas)
         stats["std_area"] = np.std(areas)
-        stats["mean_roundness"] = np.mean(roundnesses)
+        stats["mean_spot_roundness"] = np.mean(roundnesses)
         stats["std_roundness"] = np.std(roundnesses)
 
         return stats
@@ -133,11 +133,37 @@ class Realfin():
         with h5py.File(path, "r") as f:
             self.arr = np.squeeze(np.array(f["exported_data"]))
             self.total_area = self.arr.shape[0] * self.arr.shape[1]
-        self.arr_lab = label(self.arr, background=2)  # label connected regions
-        self.regions = regionprops(self.arr_lab)
-        self.regions_sig = [  # remove very large and small regions
-            r for r in self.regions if ((r.area < 0.5 * self.total_area) &
-                                        (r.area > 0.001 * self.total_area))]
+        self.type = "probs" if "Probabilities" in self.id else "simple"
+        self.nlabs = len(np.unique(self.arr)) if self.type == "simple" \
+            else self.arr.shape[2]  # no. channels
+        self.sb_len = 1  # scale bar length in pixels, 1 by default if absent
+        print(self.arr.shape)
+        if self.type == "simple":  # label connected regions
+            self.arr_lab = label(self.arr, background=2)
+            self.regions = regionprops(self.arr_lab)
+            self.regions_sig = [  # remove very large and small regions
+                r for r in self.regions if ((r.area < 0.5 * self.total_area) &
+                                            (r.area > 0.001 * self.total_area))]
+            if self.nlabs > 2:  # if scale bar channel present
+                pass  # TODO: implement scale bar detection
+        else:  # probability map
+            prob_thresh = 0.5  # set threshold for spot/scale bar detection
+            arr_bin = (self.arr[:, :, 0] > prob_thresh).astype(int)  # false->0
+            self.arr_lab = label(arr_bin, background=0)
+            self.regions = regionprops(self.arr_lab)
+            self.regions_sig = [  # remove very large and small regions
+                r for r in self.regions if ((r.area < 0.5 * self.total_area) &
+                                            (r.area > 0.001 * self.total_area))]
+            if self.nlabs > 2:  # if scale bar channel present should be channel 2
+                arr_bin2 = (self.arr[:, :, 2] > prob_thresh).astype(int)
+                self.arr_lab_sb = label(arr_bin2, background=0)
+                self.regions_sb = regionprops(self.arr_lab_sb)
+                self.regions_sig_sb = [  # remove very large and small regions
+                    r for r in self.regions_sb if ((r.area < 0.5 * self.total_area) &
+                                                   (r.area > 0.001 * self.total_area))]
+                for r in self.regions_sig_sb:
+                    if self.sb_len is None or r.major_axis_length > self.sb_len:
+                        self.sb_len = r.major_axis_length  # get longest region
 
     def phenotype(self):
         """Returns the phenotype of the real fin."""
@@ -147,48 +173,81 @@ class Realfin():
             return {
                 "id": self.id,
                 "n_regions": 0,
-                "mean_area": np.nan,
-                "std_area": np.nan,
-                "mean_roundness": np.nan,
-                "std_roundness": np.nan
+                "mean_spot_area_mm^2": np.nan,
+                "std_spot_area_mm^2": np.nan,
+                "mean_spot_roundness": np.nan,
+                "std_spot_roundness": np.nan,
+                "mean_axis_major_len_mm": np.nan,
             }
 
         stats_full = []
         for r in self.regions_sig:  # only do stats for significant regions
+            if self.sb_len == 1:
+                print(
+                    f"No scale bar found in {self.id}, excluding area and" +
+                    " axis_major_len from stats.")
+                stats_full.append({
+                    "label": r.label,
+                    "n_regions": len(self.regions_sig),
+                    "spot_area_mm^2": np.nan,
+                    "spot_roundness": (4 * math.pi * r.area) / (r.perimeter**2),
+                    "axis_major_len_mm": np.nan,
+                })
+                continue
             stats_full.append({
                 "label": r.label,
                 "n_regions": len(self.regions_sig),
-                "area": r.area,
-                "roundness": (4 * math.pi * r.area) / (r.perimeter**2),
+                "spot_area_mm^2": r.area / (self.sb_len**2),
+                "spot_roundness": (4 * math.pi * r.area) / (r.perimeter**2),
+                "axis_major_len_mm": r.axis_major_length / self.sb_len,
             })
 
         stats_full = pd.DataFrame(stats_full)
-        print(stats_full)
+
         mesh_stats, _, _ = self.mesh()
         return {
             "id": self.id,
             "n_regions": stats_full["n_regions"].iloc[0],
-            "mean_area": stats_full["area"].mean(),
-            "std_area": stats_full["area"].std(),
-            "mean_roundness": stats_full["roundness"].mean(),
-            "std_roundness": stats_full["roundness"].std(),
-            "mesh_area": mesh_stats["mesh_area"],
-            "av_dist": mesh_stats["av_dist"]
+            "mean_spot_area_mm^2": stats_full["spot_area_mm^2"].mean(),
+            "std_spot_area_mm^2": stats_full["spot_area_mm^2"].std(),
+            "mean_spot_roundness": stats_full["spot_roundness"].mean(),
+            "std_spot_roundness": stats_full["spot_roundness"].std(),
+            "mean_axis_major_len_mm": stats_full["axis_major_len_mm"].mean(),
+            "std_axis_major_len_mm": stats_full["axis_major_len_mm"].std(),
+            "mesh_area_mm^2": mesh_stats["mesh_area_mm^2"],
+            "mean_centroid_sep_mm": mesh_stats["mean_centroid_sep_mm"],
         }
 
     def plot_regions(self, display=False, export=False, ax=None):
         """Plots the regions marked as spots in the fin. Returns axis."""
-        image_label_overlay = label2rgb(self.arr_lab,
-                                        bg_color=(1, 1, 1))
+        image_label_overlay = label2rgb(self.arr_lab, bg_color=(1, 1, 1))
+        if self.arr_lab_sb is not None:
+            sb_overlay = label2rgb(self.arr_lab_sb,  # scale bar in black
+                                   bg_color=(1, 1, 1), colors=[(0, 0, 0)])
         fig = None
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 8))
         ax.imshow(image_label_overlay)
+        if self.arr_lab_sb is not None:
+            ax.imshow(sb_overlay, alpha=0.5)  # overlay scale bar
+            for r in self.regions_sig_sb:
+                y0, x0 = r.centroid
+                ax.text(x0, y0 - (self.arr.shape[1]*0.08), "SB",
+                        fontsize=10, ha='center', va='center', color="black")
 
         for r in self.regions_sig:
-            y, x = r.centroid
-            ax.text(x, y - (self.arr.shape[1]*0.08), str(r.label),
+            y0, x0 = r.centroid
+            ax.text(x0, y0 - (self.arr.shape[1]*0.08), str(r.label),
                     fontsize=10, ha='center', va='center')
+
+            orientation = r.orientation
+            x1 = x0 + math.cos(orientation) * 0.5 * r.axis_minor_length
+            y1 = y0 - math.sin(orientation) * 0.5 * r.axis_minor_length
+            x2 = x0 - math.sin(orientation) * 0.5 * r.axis_major_length
+            y2 = y0 - math.cos(orientation) * 0.5 * r.axis_major_length
+
+            ax.plot((x0, x1), (y0, y1), color="black")
+            ax.plot((x0, x2), (y0, y2), color="black")
 
         ax.set_title(f"{self.id}")
         if export:
@@ -204,8 +263,8 @@ class Realfin():
         4 or more significant regions, a Delaunay triangulation is returned,
         3 returns convex hull, 2 a line and 1 a single point."""
         mesh = None
-        area = 0
-        av_dist = 0  # average distance between centroids
+        area = np.nan
+        av_dist = np.nan  # average distance between centroids
         centroids = np.array([r.centroid for r in self.regions_sig])
 
         fig = None
@@ -251,6 +310,9 @@ class Realfin():
             area += a
             ax.triplot(centroids[:, 1], centroids[:, 0],
                        mesh.simplices, color="red")
+        # convert to mm
+        area /= self.sb_len**2
+        av_dist /= self.sb_len
         ax.text(0.05, 0.05, f"N={len(centroids)}\narea={area:.2f}" +
                 f"\nav_dist={av_dist:.2f}",
                 transform=ax.transAxes, ha='left', va='bottom')
@@ -263,8 +325,8 @@ class Realfin():
         stats = {
             "id": self.id,
             "n_regions": len(self.regions_sig),
-            "mesh_area": area,
-            "av_dist": av_dist
+            "mesh_area_mm^2": area if self.sb_len != 1 else np.nan,
+            "mean_centroid_sep_mm": av_dist if self.sb_len != 1 else np.nan
         }
 
         return stats, mesh, ax
@@ -273,34 +335,45 @@ class Realfin():
 def analyse_realfins(fin_dir="../data"):
     """Phenotype real fins in data directory."""
 
-    bins = 10
+    bins = 15
+    ymax = 40
 
     stats = []
     for file in os.listdir(fin_dir):
         if file.endswith(".h5"):
             fin = Realfin(path=os.path.join(fin_dir, file))
+            print(file)
             stats.append(fin.phenotype())
             fin.plot_regions()
 
     stats = pd.DataFrame(stats)
-    print(stats)
+    stats.to_csv(f"{fin_dir}/real_fin_stats.csv", index=False)
 
-    plot_vars = ["n_regions", "mean_area",
-                 "mean_roundness", "mesh_area", "av_dist"]
-    plot_titles = [
-        "No. Spots", "Mean Area", "Mean Roundness",
-        "Mesh Area", "Average Centroid Separation Distance"
-    ]
+    plot_vars = ["n_regions", "mean_spot_area_mm^2",
+                 "mean_spot_roundness", "mesh_area_mm^2", "mean_centroid_sep_mm",
+                 "mean_axis_major_len_mm"]
+    # plot_titles = [
+    #     "No. Spots", "Mean Spot Area (mm^2)", "Mean Spot Roundness",
+    #     "Average Major Axis Length (mm)",
+    #     "Mesh Area (mm^2)", "Average Centroid Separation Distance (mm)"
+    # ]
     fig, axs = plt.subplots(3, 2, figsize=(
-        6, 6), layout="constrained", sharey=True)
+        6, 6), layout="constrained")
     axs = axs.flat
     for i, plot_var in enumerate(plot_vars):
-        axs[i].hist(stats[plot_var], bins)
-        axs[i].set_xlabel(plot_titles[i])
+        n_unique = len(stats[plot_var].dropna().unique())
+        counts, _, _ = axs[i].hist(stats[plot_var], bins=bins if n_unique >
+                                   bins else n_unique)
+        axs[i].set_xlabel(plot_var)
         axs[i].grid(alpha=0.3)
-    axs[-1].axis("off")  # hide the last empty subplot
+        axs[i].text(0.95, 0.95, fr"$N={stats[plot_var].notna().sum()}$",
+                    transform=axs[i].transAxes, ha="right", va="top")
+        axs[i].set_ylim(0, ymax if counts.max() <
+                        ymax else counts.max() + 0.05*counts.max())
+    # axs[-1].axis("off")  # hide the last empty subplot
     fig.supylabel("Frequency")
-    fig.suptitle(fr"Real Fin Phenotype Statistics $N={len(stats)}$")
+    fig.suptitle(
+        fr"{os.path.basename(fin_dir)} Phenotype Statistics $N={len(stats)}$")
 
     plt.show()
 
@@ -314,7 +387,7 @@ def plot_segmented_fins(fin_dir="../data"):
 
 
 def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
-                           mode=0, nplot=0):
+                           mode=0, nplot=80):
     """Plot segmented and real fins side by side.
     Args:
         fin_dir     directory containing the .h5 files of segmented fins.
@@ -324,28 +397,36 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
         nplot       number of files to plot, if 0 all files are plotted.
     """
     hfiles = [f for f in os.listdir(fin_dir) if f.endswith(".h5")]
-    pngs = [f.replace("_Simple Segmentation", "").replace(".h5", ".png")
-            for f in hfiles]
+    img_ext = ".png" if any(f.endswith(".png")
+                            for f in os.listdir(fin_dir)) else ".jpg"
+    if hfiles[0].endswith("_Simple Segmentation.h5"):
+        imgs = [f.replace("_Simple Segmentation", "").replace(".h5", img_ext)
+                for f in hfiles]
+    elif hfiles[0].endswith("_Probabilities.h5"):
+        imgs = [f.replace("_Probabilities", "").replace(".h5", img_ext)
+                for f in hfiles]
+    else:
+        raise ValueError("Unrecognized .h5 file format.")
     n = len(hfiles)
-    assert len(pngs) == n, "Mismatch between .h5 and .png files."
+    assert len(imgs) == n, "Mismatch between .h5 and img files."
     if n == 0:
         print("No .h5 files found.")
         return
-    ncol = 1
+    ncol = 4
     nrow = math.ceil(n / ncol) if nplot == 0 else math.ceil(nplot / ncol)
     _, axs = plt.subplots(nrow, ncol * 2, figsize=(
-        1.5*ncol, 0.5 * nrow), layout="constrained")
+        4*ncol, 1 * nrow), layout="constrained")
 
     if n == 1:
         axs = [axs]  # Ensure axs is always iterable as a list of pairs
     axs = axs.reshape(-1, ncol * 2)
 
     for i, file in enumerate(hfiles):
-        png = Image.open(os.path.join(fin_dir, pngs[i]))
+        img = Image.open(os.path.join(fin_dir, imgs[i]))
         seg = Realfin(path=os.path.join(fin_dir, file))
         row = i // ncol
         col = (i % ncol) * 2
-        axs[row][col].imshow(png)
+        axs[row][col].imshow(img)
         axs[row][col].axis("off")
         if mode == 0:
             seg.plot_regions(display=False, export=False, ax=axs[row][col + 1])
@@ -363,7 +444,7 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
 
 
 def tissue_properties(run_id):
-    """Return properties of the tissue over the entire timecourse, not 
+    """Return properties of the tissue over the entire timecourse, not
     deducible individual vtk files e.g. maximum no. cell types"""
     cell_types = []
     vtks = load(f"../run/{run_id}/out_0_0_*.vtk")
@@ -401,7 +482,7 @@ def plot_sim_tseries_vedo(run_id, n_frames, axes=False):
     p.interactive().close()
 
 
-def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2):
+def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
     """Plot a course time series of simulation frames using matplotlib."""
     cell_types = tissue_properties(run_id)
     frames = np.linspace(0, 100, n_frames, dtype=int)
@@ -430,6 +511,13 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2):
                                (ctype - cell_types.min()) /
                                (cell_types.max() - cell_types.min())),
                            rasterized=True)  # rasterize for large data
+        if sb:  # scale bar 1mm
+            x0, x1 = axs[i].get_xlim()
+            y0, y1 = axs[i].get_ylim()
+            bar_x = x0 + 0.05 * (x1 - x0)
+            bar_y = y0 + 0.05 * (y1 - y0)
+            axs[i].plot([bar_x, bar_x + 1], [bar_y, bar_y],
+                        color="black", lw=2)
         axs[i].set_aspect("equal")
         axs[i].set_title(fr"$t={fr*10}$")
         axs[i].set_xticks([])
@@ -451,9 +539,10 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2):
 
 
 def print_help():
+    """Prints help message for using the script from command line."""
     help_text = """
     Usage: python phenotype.py [options]
-    
+
     Options:
         -h              Show this help message and exit.
         -f [function]  Specify the function to run. Options include:
@@ -465,10 +554,10 @@ def print_help():
         -d [directory] Specify the directory contining data to plot.
 
     Description:
-        This script provides functionalities to analyze and visualize 
-        phenotypes of tissue simulations and real fin data. It includes 
-        classes for handling simulation frames and real fin data, as well 
-        as functions for plotting time series and comparing segmented 
+        This script provides functionalities to analyze and visualize
+        phenotypes of tissue simulations and real fin data. It includes
+        classes for handling simulation frames and real fin data, as well
+        as functions for plotting time series and comparing segmented
         and real fins.
     """
     print(help_text)
@@ -479,12 +568,13 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     if "-h" in args:
         print_help()
+        sys.exit()
     if "-d" in args:
         WD = args[args.index("-d") + 1].rstrip("/")
     if "-f" in args:
         FUNC = int(args[args.index("-f") + 1])
         if FUNC == 0:
-            analyse_realfins()
+            analyse_realfins(WD)
         elif FUNC == 1:
             plot_sim_tseries_vedo(WD, 6)
         elif FUNC == 2:
@@ -492,7 +582,11 @@ if __name__ == "__main__":
         elif FUNC == 3:
             plot_segmented_fins()
         elif FUNC == 4:
-            compare_segmented_real()
+            compare_segmented_real(WD)
+        else:
+            print_help()
+    else:
+        print_help()
     # plot_segmented_fins()
     # compare_segmented_real(
     #     fin_dir="../data/data_23-06-25", export=True, mode=1, nplot=2)
