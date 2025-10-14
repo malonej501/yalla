@@ -22,6 +22,7 @@ from PIL import Image
 
 FUNC = 0
 WD = "../run/saves/"
+NSHOW = 0  # no. fins to show in real fin comparison
 
 
 class Frame():
@@ -130,6 +131,7 @@ class Realfin():
     def __init__(self, path):
         self.path = path  # file name of the .h5 file
         self.id = os.path.basename(path).split(".")[0]
+        self.fish_id = self.id.split("_")[0]
         with h5py.File(path, "r") as f:
             self.arr = np.squeeze(np.array(f["exported_data"]))
             self.total_area = self.arr.shape[0] * self.arr.shape[1]
@@ -378,6 +380,69 @@ def analyse_realfins(fin_dir="../data"):
     plt.show()
 
 
+def analyse_realfins_longitudinal(fin_dir="../data"):
+    """Phenotype real fins in data directory with longitudinal data."""
+
+    stats = []
+    for file in os.listdir(fin_dir):
+        if file.endswith(".h5"):
+            fin = Realfin(path=os.path.join(fin_dir, file))
+            print(file)
+            stats.append(fin.phenotype())
+    stats = pd.DataFrame(stats)
+    # get fish id, date and index from file name
+    stats["fish_id"] = stats["id"].apply(lambda x: x.split("_")[0])
+    stats["idx"] = stats["id"].apply(lambda x: x.split("_")[-2])
+    stats["date"] = stats["id"].apply(lambda x: x.split("_")[-3])
+    stats["date"] = pd.to_datetime(stats["date"], format="%d-%m")
+    stats["date"] = stats["date"].apply(lambda x: x.replace(year=2022))
+    stats["day"] = (stats["date"] - stats["date"].min()).dt.days
+    stats = stats.sort_values(by=["fish_id", "day"])
+    stats.to_csv(f"{fin_dir}/real_fin_stats_longitudinal.csv", index=False)
+    print(stats)
+
+    plot_vars = ["n_regions", "mean_spot_area_mm^2",
+                 "mean_spot_roundness", "mesh_area_mm^2",
+                 "mean_centroid_sep_mm",
+                 "mean_axis_major_len_mm"]
+
+    fig, axs = plt.subplots(3, 2, figsize=(
+        6, 6), layout="constrained", sharex=True)
+    axs = axs.flat
+    handles_labels = {}
+    for i, plot_var in enumerate(plot_vars):
+        for fish_id, df in stats.groupby("fish_id"):
+            axs[i].plot(df["day"], df[plot_var], marker="o", label=fish_id,
+                        alpha=0.2)
+        sum_stats = stats.groupby("day").agg(
+            {plot_var: ["mean", "std"]})
+        axs[i].plot(sum_stats.index, sum_stats[plot_var]["mean"],
+                    "-o", markersize=0.5, color="black", label="Mean")
+        axs[i].fill_between(sum_stats.index,
+                            sum_stats[plot_var]["mean"] -
+                            sum_stats[plot_var]["std"],
+                            sum_stats[plot_var]["mean"] +
+                            sum_stats[plot_var]["std"],
+                            color="gray", alpha=0.5,
+                            label=r"Mean $\pm$ SD")
+        # axs[i].errorbar(sum_stats.index, sum_stats[plot_var]["mean"],
+        #                 yerr=sum_stats[plot_var]["std"], fmt="-o",
+        #                 label=r"Mean $\pm$ SD")
+
+        axs[i].set_ylabel(plot_var)
+        axs[i].grid(alpha=0.3)
+        h, l = axs[i].get_legend_handles_labels()
+        for hh, ll in zip(h, l):
+            if ll not in handles_labels:
+                handles_labels[ll] = hh
+
+    fig.supxlabel("Days since first image")
+    fig.legend(list(handles_labels.values()), list(handles_labels.keys()),
+               title="Fish ID", fontsize=6, loc="outside right")
+
+    plt.show()
+
+
 def plot_segmented_fins(fin_dir="../data"):
     """Plots the segmented fins in the data directory."""
     for file in os.listdir(fin_dir):
@@ -387,7 +452,7 @@ def plot_segmented_fins(fin_dir="../data"):
 
 
 def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
-                           mode=0, nplot=80):
+                           mode=0, nplot=0):
     """Plot segmented and real fins side by side.
     Args:
         fin_dir     directory containing the .h5 files of segmented fins.
@@ -412,7 +477,7 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
     if n == 0:
         print("No .h5 files found.")
         return
-    ncol = 4
+    ncol = 10
     nrow = math.ceil(n / ncol) if nplot == 0 else math.ceil(nplot / ncol)
     _, axs = plt.subplots(nrow, ncol * 2, figsize=(
         4*ncol, 1 * nrow), layout="constrained")
@@ -423,6 +488,8 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
 
     for i, file in enumerate(hfiles):
         img = Image.open(os.path.join(fin_dir, imgs[i]))
+        print(imgs[i])
+        exit()
         seg = Realfin(path=os.path.join(fin_dir, file))
         row = i // ncol
         col = (i % ncol) * 2
@@ -545,13 +612,15 @@ def print_help():
 
     Options:
         -h              Show this help message and exit.
-        -f [function]  Specify the function to run. Options include:
-                       0 ...analyse_realfins
-                       1 ...plot_sim_tseries_vedo
-                       2 ...plot_sim_tseries_mtpl
-                       3 ...plot_segmented_fins
-                       4 ...compare_segmented_real
-        -d [directory] Specify the directory contining data to plot.
+        -f [function]   Specify the function to run. Options include:
+                        0 ...plot_sim_tseries_vedo
+                        1 ...plot_sim_tseries_mtpl
+                        2 ...plot_segmented_fins
+                        3 ...compare_segmented_real
+                        4 ...analyse_realfins
+                        5 ...analyse_realfins_longitudinal
+        -d [directory]  Specify the directory contining data to plot.
+        -n [int]        Specify the number of fins to show function 3
 
     Description:
         This script provides functionalities to analyze and visualize
@@ -571,18 +640,22 @@ if __name__ == "__main__":
         sys.exit()
     if "-d" in args:
         WD = args[args.index("-d") + 1].rstrip("/")
+    if "-n" in args:
+        NSHOW = int(args[args.index("-n") + 1])
     if "-f" in args:
         FUNC = int(args[args.index("-f") + 1])
         if FUNC == 0:
-            analyse_realfins(WD)
-        elif FUNC == 1:
             plot_sim_tseries_vedo(WD, 6)
-        elif FUNC == 2:
+        elif FUNC == 1:
             plot_sim_tseries_mtpl(WD, 6)
-        elif FUNC == 3:
+        elif FUNC == 2:
             plot_segmented_fins()
+        elif FUNC == 3:
+            compare_segmented_real(WD, nplot=NSHOW)
         elif FUNC == 4:
-            compare_segmented_real(WD)
+            analyse_realfins(WD)
+        elif FUNC == 5:
+            analyse_realfins_longitudinal(WD)
         else:
             print_help()
     else:
