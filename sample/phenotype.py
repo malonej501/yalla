@@ -461,19 +461,28 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
                     1 segmented + mesh vs real
         nplot       number of files to plot, if 0 all files are plotted.
     """
-    hfiles = [f for f in os.listdir(fin_dir) if f.endswith(".h5")]
-    img_ext = ".png" if any(f.endswith(".png")
+    fin_dat = pd.DataFrame(
+        {"hfile": [f for f in os.listdir(fin_dir) if f.endswith(".h5")]})
+    img_ext = ".png" if any(f.endswith(".png")  # get correct img extension
                             for f in os.listdir(fin_dir)) else ".jpg"
-    if hfiles[0].endswith("_Simple Segmentation.h5"):
-        imgs = [f.replace("_Simple Segmentation", "").replace(".h5", img_ext)
-                for f in hfiles]
-    elif hfiles[0].endswith("_Probabilities.h5"):
-        imgs = [f.replace("_Probabilities", "").replace(".h5", img_ext)
-                for f in hfiles]
+    # get img file name from .h5 file name
+    if fin_dat["hfile"][0].endswith("_Simple Segmentation.h5"):
+        fin_dat["imgs"] = fin_dat["hfile"].apply(lambda x: x.replace(
+            "_Simple Segmentation", "").replace(".h5", img_ext))
+    elif fin_dat["hfile"][0].endswith("_Probabilities.h5"):
+        fin_dat["imgs"] = fin_dat["hfile"].apply(lambda x: x.replace(
+            "_Probabilities", "").replace(".h5", img_ext))
     else:
         raise ValueError("Unrecognized .h5 file format.")
-    n = len(hfiles)
-    assert len(imgs) == n, "Mismatch between .h5 and img files."
+    fin_dat["fish_id"] = fin_dat["hfile"].apply(lambda x: x.split("_")[0])
+    fin_dat["date"] = fin_dat["hfile"].apply(lambda x: x.split("_")[-3])
+    fin_dat["date"] = pd.to_datetime(fin_dat["date"], format="%d-%m")
+    fin_dat["date"] = fin_dat["date"].apply(lambda x: x.replace(year=2022))
+    fin_dat["day"] = (fin_dat["date"] - fin_dat["date"].min()).dt.days
+    fin_dat = fin_dat.sort_values(by=["fish_id", "day"])
+
+    n = len(fin_dat)
+    assert len(fin_dat["imgs"]) == n, "Mismatch between .h5 and img files."
     if n == 0:
         print("No .h5 files found.")
         return
@@ -486,24 +495,32 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
         axs = [axs]  # Ensure axs is always iterable as a list of pairs
     axs = axs.reshape(-1, ncol * 2)
 
-    for i, file in enumerate(hfiles):
-        img = Image.open(os.path.join(fin_dir, imgs[i]))
-        print(imgs[i])
-        exit()
-        seg = Realfin(path=os.path.join(fin_dir, file))
-        row = i // ncol
-        col = (i % ncol) * 2
-        axs[row][col].imshow(img)
-        axs[row][col].axis("off")
-        if mode == 0:
-            seg.plot_regions(display=False, export=False, ax=axs[row][col + 1])
-        elif mode == 1:
-            seg.mesh(display=False, ax=axs[row][col + 1])
-        axs[row][col + 1].set_title("")
-        axs[row][col + 1].set_xticks([])
-        axs[row][col + 1].set_yticks([])
-        if nplot > 0 and i + 1 >= nplot:  # stop if reached nplot
-            break
+    for i, row in enumerate(axs):
+        for j, ax in enumerate(row):
+            if j % 2 == 1:
+                continue  # skip every second column for segmented fin
+            fish = fin_dat["fish_id"].unique()[int(j/2)]
+            day = fin_dat["day"].unique()[i]
+            fin_ij = fin_dat[(fin_dat["fish_id"] == fish)
+                             & (fin_dat["day"] == day)]
+            if fin_ij.empty:
+                print(f"No fin found for fish {fish} on day {day}.")
+                ax.axis("off")
+                continue
+            img = Image.open(os.path.join(fin_dir, fin_ij["imgs"].values[0]))
+            seg = Realfin(path=os.path.join(
+                fin_dir, fin_ij["hfile"].values[0]))
+            ax.imshow(img)
+            ax.axis("off")
+            if mode == 0:
+                seg.plot_regions(display=False, export=False, ax=row[j + 1])
+            elif mode == 1:
+                seg.mesh(display=False, ax=row[j + 1])
+            row[j + 1].set_title("")
+            row[j + 1].set_xticks([])
+            row[j + 1].set_yticks([])
+            if nplot > 0 and i + 1 >= nplot:  # stop if reached nplot
+                break
     if export:
         plt.savefig(f"real_seg_comp_{n}_{mode}.pdf", dpi=300)
 
