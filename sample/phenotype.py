@@ -234,10 +234,17 @@ class Realfin():
             ax.imshow(sb_overlay, alpha=0.5)  # overlay scale bar
             for r in self.regions_sig_sb:
                 y0, x0 = r.centroid
+                orientation = r.orientation
+                x1 = x0 + math.sin(orientation) * 0.5 * r.major_axis_length
+                y1 = y0 - math.cos(orientation) * 0.5 * r.major_axis_length
+                x2 = x0 - math.sin(orientation) * 0.5 * r.major_axis_length
+                y2 = y0 + math.cos(orientation) * 0.5 * r.major_axis_length
+                ax.plot([x1, x2], [y1, y2], color="purple",
+                        lw=2, label="Scale Bar Major Axis")
                 ax.text(x0, y0 - (self.arr.shape[1]*0.08), "SB",
                         fontsize=10, ha='center', va='center', color="black")
 
-        for r in self.regions_sig:
+        for r in self.regions_sig:  # plot spot major/minor axes
             y0, x0 = r.centroid
             ax.text(x0, y0 - (self.arr.shape[1]*0.08), str(r.label),
                     fontsize=10, ha='center', va='center')
@@ -352,8 +359,8 @@ def analyse_realfins(fin_dir="../data"):
     stats.to_csv(f"{fin_dir}/real_fin_stats.csv", index=False)
 
     plot_vars = ["n_regions", "mean_spot_area_mm^2",
-                 "mean_spot_roundness", "mesh_area_mm^2", "mean_centroid_sep_mm",
-                 "mean_axis_major_len_mm"]
+                 "mean_spot_roundness", "mean_axis_major_len_mm",
+                 "mesh_area_mm^2", "mean_centroid_sep_mm",]
     # plot_titles = [
     #     "No. Spots", "Mean Spot Area (mm^2)", "Mean Spot Roundness",
     #     "Average Major Axis Length (mm)",
@@ -402,9 +409,11 @@ def analyse_realfins_longitudinal(fin_dir="../data"):
     print(stats)
 
     plot_vars = ["n_regions", "mean_spot_area_mm^2",
-                 "mean_spot_roundness", "mesh_area_mm^2",
-                 "mean_centroid_sep_mm",
-                 "mean_axis_major_len_mm"]
+                 "mean_spot_roundness", "mean_axis_major_len_mm",
+                 "mesh_area_mm^2", "mean_centroid_sep_mm",]
+    # plot_titles = ["No. Spots", "Mean Spot Area (mm^2)", "Mean Spot Roundness",
+    #                "Average Major Axis Length (mm)",
+    #                "Mesh Area (mm^2)", "Average Centroid Separation Distance (mm)"]
 
     fig, axs = plt.subplots(3, 2, figsize=(
         6, 6), layout="constrained", sharex=True)
@@ -506,6 +515,7 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
             if fin_ij.empty:
                 print(f"No fin found for fish {fish} on day {day}.")
                 ax.axis("off")
+                row[j+1].axis("off")
                 continue
             img = Image.open(os.path.join(fin_dir, fin_ij["imgs"].values[0]))
             seg = Realfin(path=os.path.join(
