@@ -125,35 +125,63 @@ __host__ __device__ bool test_exclusion(const Mesh_d& mesh, const Pt d_X)
     return (n_intersections % 2 == 0);
 }
 
+// From Ericson, C., 2004. Real-Time Collision Detection, 0 ed. CRC Press.
+// https://doi.org/10.1201/b14581 section 5.1.5
 template<typename Pt>
 __host__ __device__ float3 closest_point_on_triangle(
     const Pt d_X, const Triangle_d& tri)
 {
+    // find closest point on triangle abc to point p
     float3 p = make_float3(d_X.x, d_X.y, d_X.z);
-    // Compute vectors
-    float3 ab = tri.V1 - tri.V0;
-    float3 ac = tri.V2 - tri.V0;
-    float3 ap = p - tri.V0;
-
-    // Compute barycentric coordinates
+    float3 a = tri.V0, b = tri.V1, c = tri.V2;
+    // Check if P in vertex region ouside A
+    float3 ab = b - a;
+    float3 ac = c - a;
+    float3 ap = p - a;
     float d1 = dot_product(ab, ap);
     float d2 = dot_product(ac, ap);
-    float d3 = dot_product(ab, ab);
-    float d4 = dot_product(ab, ac);
-    float d5 = dot_product(ac, ac);
+    if (d1 <= 0.0f && d2 <= 0.0f) return a;  // Barycentric coords (1,0,0)
 
-    float denom = d3 * d5 - d4 * d4;
-    float v = (d5 * d1 - d4 * d2) / denom;
-    float w = (d3 * d2 - d4 * d1) / denom;
-    float u = 1.0f - v - w;
+    // Check if P in vertex region outside B
+    float3 bp = p - b;
+    float d3 = dot_product(ab, bp);
+    float d4 = dot_product(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3) return b;  // Barycentric coords (0,1,0)
 
-    // Clamp barycentric coordinates to triangle
-    u = fmaxf(0.0f, fminf(1.0f, u));
-    v = fmaxf(0.0f, fminf(1.0f, v));
-    w = fmaxf(0.0f, fminf(1.0f, w));
+    // Check if P in edge region of AB, if so return projection of P onto AB
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+        float v = d1 / (d1 - d3);
+        return a + ab * v;  // Barycentric coords (1-v,v,0)
+    }
 
-    // Compute closest point
-    return tri.V0 * u + tri.V1 * v + tri.V2 * w;
+    // Check if P in vertex region outside C
+    float3 cp = p - c;
+    float d5 = dot_product(ab, cp);
+    float d6 = dot_product(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6) return c;  // Barycentric coords (0,0,1)
+
+    // Check if P in edge region of AC, if so return projection of P onto AC
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+        float w = d2 / (d2 - d6);
+        return a + ac * w;  // Barycentric coords (1-w,0,w)
+    }
+
+    // Check if P in edge region of BC, if so return projection of P onto BC
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+        float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return b + (c - b) * w;  // Barycentric coords (0,1-w,w)
+    }
+
+    // P inside face region. Compute Q through its barycentric coordinates
+    // (u,v,w)
+    float denom = 1.0f / (va + vb + vc);
+    float v = vb * denom;
+    float w = vc * denom;
+    return a + ab * v +
+           ac * w;  // = u*a + v*b + w*c, u = va * denom = 1.0f - v - w
 }
 
 std::vector<Triangle_d> read_facets_from_vtk(const std::string& filename)
