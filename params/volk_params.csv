@@ -20,14 +20,10 @@ t_grow_switch,tissue_grow,bool,true,fin growth switch
 t_growth_rate,tissue_grow,float,1.01,fin growth rate (multiplicative)
 mov_switch,migration,bool,true,cell movement switch
 diff_adh_rep,migration,bool,true,differential adhesion and repulsion switch
-rii,migration,float,0.012,A-A repulsion length scale
-Rii,migration,float,0.0045,A-A repulsion strength
-aii,migration,float,0.019,A-A adhesion length scale
-Aii,migration,float,0.0019,A-A adhesion strength
-rdd,migration,float,0.012,Default repulsion length scale
-Rdd,migration,float,0.0045,Default repulsion strength
-add,migration,float,1,Default adhesion length scale
-Add,migration,float,0.001,Default adhesion strength
+rii,migration,float,0.04,A-A repulsion inflection point (mm)
+Rii,migration,float,0.01,A-A max repulsion strength (mm/day)
+rdd,migration,float,0.02,Default repulsion inflection point (mm)
+Rdd,migration,float,0.05,Default max repulsion strength (mm/day)   
 adv_switch,advection,bool,false,advection switch
 ad_ang,advection,float,50,"advection angle below y=0"
 ad_s,advection,float,0.01,default advection strength
@@ -37,7 +33,7 @@ ad_mult,advection,float,0.3,advection waiting time multiplier - max wait time is
 prolif_switch,proliferation,bool,true,proliferation switch
 pmode,proliferation,int,0,"proliferation rules: 0-no child type switching, 1-B->A switching depending on r_A_birth, 2-A->B switching depending on r_A_birth and if u < uthresh for parent"
 A_div,proliferation,float,0.002,division rate for T1/A cells
-B_div,proliferation,float,0.000001,division rate for T2/B cells
+B_div,proliferation,float,0.0001,division rate for T2/B cells
 C_div,proliferation,float,0,division rate for T3/C cells
 r_A_birth,proliferation,float,0.000,chance of type 2 cells producing type 1 cells
 uthresh,proliferation,float,0.03,B/t2 cell children will not spawn as A/t1 if the amount of u exceeds this value
