@@ -69,6 +69,7 @@ def get_shape():
         # start from the posterior proximal and go clockwise, leave
         # out the duplicate vertices at the ends
         verts = [p for p in reversed(p_verts)] + [d for d in d_verts[1:-1]]
+        print(verts)
         faces = [[i for i in range(len(verts) + 2)]]
 
     return verts, faces, norms
@@ -111,12 +112,12 @@ def export_vtk_custom(verts, faces, norms):
                                str(norm[1]) + " " + str(norm[2]) + "\n")
 
 
-def extrude_mesh(verts):
+def extrude_mesh(verts, amount=EXTRUDE_Z):
     """Extrude 2D shape in the z direction by a specified distance mesh"""
 
     # Extrude in the z direction
-    verts_3d = [(x, y, z + EXTRUDE_Z) for (x, y, z) in verts] + \
-        [(x, y, z - EXTRUDE_Z) for (x, y, z) in verts]
+    verts_3d = [(x, y, z + amount) for (x, y, z) in verts] + \
+        [(x, y, z - amount) for (x, y, z) in verts]
 
     # Create faces for the extruded mesh
     num_verts = len(verts)
@@ -130,12 +131,7 @@ def extrude_mesh(verts):
     for i in range(num_verts):
         next_i = (i + 1) % num_verts
         faces_3d.append([i, next_i, next_i + num_verts, i + num_verts])
-
     return verts_3d, faces_3d
-
-
-def export_custom_fin_object():
-    pass
 
 
 def import_lmks(filename):
