@@ -56,14 +56,24 @@ class Fin:
         self.p_verts = list(p_verts[1:-1])
         self.d_verts = list(d_verts[1:-1])
 
+        # translate fin such that top left is at 0,0,0 again
+        xoff = self.p_verts[-1][-1][0]
+        for vpair in self.p_verts:
+            for v in vpair:
+                v[0] -= xoff
+        for vpair in self.d_verts:
+            for v in vpair:
+                v[0] -= xoff
+
         # Rays as quads between proximal and distal vertices
-        for i in range(0, len(self.p_verts)):
+        for i, (p_pair, d_pair) in enumerate(
+                zip(self.p_verts, reversed(self.d_verts))):
             # starting in proximal posterior corner anti-clockwise
             self.rays.append(
-                (self.p_verts[i][0],
-                    self.p_verts[i][1],
-                    self.d_verts[-i - 1][0],
-                    self.d_verts[-i - 1][1])
+                (p_pair[0],
+                 p_pair[1],
+                 d_pair[0],
+                 d_pair[1])
             )
 
         self.pflat = [i for pair in self.p_verts for i in pair]
