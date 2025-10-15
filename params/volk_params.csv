@@ -22,8 +22,8 @@ mov_switch,migration,bool,true,cell movement switch
 diff_adh_rep,migration,bool,true,differential adhesion and repulsion switch
 rii,migration,float,0.04,A-A repulsion inflection point (mm)
 Rii,migration,float,0.01,A-A max repulsion strength (mm/day)
-rdd,migration,float,0.02,Default repulsion inflection point (mm)
-Rdd,migration,float,0.05,Default max repulsion strength (mm/day)   
+rdd,migration,float,0.05,Default repulsion inflection point (mm)
+Rdd,migration,float,0.02,Default max repulsion strength (mm/day)   
 adv_switch,advection,bool,false,advection switch
 ad_ang,advection,float,50,"advection angle below y=0"
 ad_s,advection,float,0.01,default advection strength
