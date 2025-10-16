@@ -9,6 +9,7 @@
 // Geforce 30XX cards.
 #include <thrust/execution_policy.h>
 #include <thrust/remove.h>
+#include <thrust/scan.h>
 
 #include <cmath>
 #include <filesystem>
@@ -190,6 +191,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
     if (d_cell_type[i] == 1) {
         // if (d_X[i].u > 0.85) return;
         if (curand_uniform(&d_state[i]) > (d_pm.A_div * d_pm.dt)) return;
+        // return;
     }
 
     if (d_cell_type[i] == 2) {
@@ -270,17 +272,43 @@ __global__ void death(
     // if (d_X[i].u > 0.4 && d_X[i].u < 0.43 &&
     if (d_X[i].u > d_pm.u_death &&
         (d_cell_type[i] == 1 ||
-            d_cell_type[i] == 3)) {       // die if type 1/3 and u high
-        int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
-        // overwrite cell i with last cell in d_X, stop if only one cell left
-        if (i < n) {
-            d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
-            d_W[i] = d_W[n - 1];
-            d_cell_type[i] = d_cell_type[n - 1];
-            d_mech_str[i] = d_mech_str[n - 1];
-            d_in_slow[i] = d_in_slow[n - 1];
-        }
+            d_cell_type[i] == 3)) {  // die if type 1/3 and u high
+        // int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
+        // // overwrite cell i with last cell in d_X, stop if only one cell left
+        // if (i < n) {
+        //     d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
+        //     d_W[i] = d_W[n - 1];
+        //     d_cell_type[i] = d_cell_type[n - 1];
+        //     d_mech_str[i] = d_mech_str[n - 1];
+        //     d_in_slow[i] = d_in_slow[n - 1];
+        // }
+        d_cell_type[i] = -1;  // mark cell as dead for removal
     }
+}
+
+// Predicate for dead cells
+struct is_dead {
+    __host__ __device__ bool operator()(const thrust::tuple<int>& t) const
+    {
+        return thrust::get<0>(t) < 0;  // cell_type < 0 means dead
+    }
+};
+
+void compact_cells_with_remove_if(int n_cells, Cell* d_X, Cell* d_W,
+    int* d_cell_type, float* d_mech_str, bool* d_in_slow, int* d_n_cells)
+{
+    // Create zip iterators for all arrays
+    auto first = thrust::make_zip_iterator(
+        thrust::make_tuple(d_cell_type, d_X, d_W, d_mech_str, d_in_slow));
+    auto last = first + n_cells;
+
+    // Remove dead cells (cell_type < 0) from all arrays
+    auto new_end = thrust::remove_if(thrust::device, first, last,
+        thrust::make_zip_iterator(thrust::make_tuple(d_cell_type)), is_dead());
+
+    // Update n_cells
+    int new_n = new_end - first;
+    cudaMemcpy(d_n_cells, &new_n, sizeof(int), cudaMemcpyHostToDevice);
 }
 
 template<typename MeshType>
@@ -341,7 +369,7 @@ __global__ void wall_forces_new(
 
     float min_dist2 = 1e30f;
     float3 closest_nm;
-    for (int j = 0; j < wall_mesh.n_facets; ++j) {
+    for (int j = 0; j < wall_mesh.n_facets; ++j) {  // find closest triangle
         float3 pt = closest_point_on_triangle(d_X[i], wall_mesh.d_facets[j]);
         float dx = d_X[i].x - pt.x;
         float dy = d_X[i].y - pt.y;
@@ -641,8 +669,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         if (time_step > 0 && time_step % 10 == 0) {
             // std::string vtk_filename = wall_files[int(time_step / 100)];
             if (h_pm.t_grow_switch) {
-                fin.grow(h_pm.t_growth_rate);  // grow the fin by 10% every
-                // 10 timesteps
+                fin.grow(h_pm.t_growth_rate);
+                // growth rate is per day dt is 0.2 days so multiply by 0.2
+                // multiply by 10 because growth only occurs every 10 timesteps
                 grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), cells.d_X, h_pm.t_growth_rate);
                 update_slow_reg(fin, slow_reg);
@@ -669,6 +698,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             if (h_pm.death_switch)
                 death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), cells.d_X, cells.d_n, d_state);
+            compact_cells_with_remove_if(cells.get_d_n(), cells.d_X, W.d_prop,
+                cell_type.d_prop, mech_str.d_prop, in_slow.d_prop, cells.d_n);
         }
 
         if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
