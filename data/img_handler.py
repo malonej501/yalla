@@ -16,6 +16,8 @@ plt.style.use("../misc/stylesheet.mplstyle")
 
 
 START_FROM = 171  # index of image to start from when landmarking
+WD = None  # working directory for analysis
+FUNC = 0
 
 
 def load_imgs_from_directory(dir_path):
@@ -591,8 +593,8 @@ def visualise_landmarks_layered(dir_path, text=False, norm=False):
             # color("gray")
             # ax.invert_yaxis()
 
-    fig.supxlabel('X (mm)')
-    fig.supylabel('Y (mm)')
+    fig.supxlabel('Anterior-posterior (mm)')
+    fig.supylabel('Proximal-distal (mm)')
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=cnorm)
     sm.set_array([])
 
@@ -759,7 +761,7 @@ def ap_len_over_time(path):
 
     ax.set_xlabel("Days since first image")
     ax.set_ylabel("AP length (mm)")
-    ax.legend(title="Fish ID")
+    ax.legend(title="Fish ID", fontsize=6)
     ax.grid(alpha=0.3)
     # see https://en.wikipedia.org/wiki/Mixed_model
     model = smf.mixedlm("ap_len_mm ~ days", data=max_lens,
@@ -781,9 +783,131 @@ def ap_len_over_time(path):
     ax.fill_between(np.arange(0, max_lens["days"].max()), fit_l,
                     fit_u, color='gray',
                     alpha=0.5, label='95% Confidence Interval')
-    ax.text(0.65, 0.05, f"Slope: {model.params['days']:.3f} mm/day\n" +
-            f"p-value: {model.pvalues['days']:.3e}",
-            transform=ax.transAxes, va='bottom', ha="left")
+    ax.text(0.95, 0.05, f"Slope: {model.params['days']:.3f} mm/day",  # +
+            # f"\np-value: {model.pvalues['days']:.3e}",
+            transform=ax.transAxes, va='bottom', ha="right",)
+    plt.savefig("ap_len_over_time.svg")
+    plt.show()
+
+
+def ray_len_over_time(path):
+    """Plot length of each fin ray over time."""
+
+    lmks = pd.read_csv(path)
+
+    lmks = lmks.groupby(["id", "date"]).apply(
+        px_to_mm).reset_index(drop=True)
+    lmks["date"] = pd.to_datetime(lmks["date"], format="%d-%m")
+    lmks["days"] = (lmks["date"] - lmks["date"].min()).dt.days
+    lmks.sort_values(["id", "days", "landmark"], inplace=True)
+
+    # get length of each ray (posterior distal pair)
+    # lmks.groupby(["id", "days"]).apply(
+    #     lambda x:
+    # )
+    ray_lens = []
+    for image in lmks["image"].unique():
+        print(image)
+        f_lmks_i = lmks[lmks["image"] == image]
+
+        # get edge and distal points in order from anterior to posterior
+        edge_pts = f_lmks_i[f_lmks_i["type"] == "e"].sort_values(
+            "landmark", ascending=False)
+        dist_pts = f_lmks_i[f_lmks_i["type"] == "f"].sort_values(
+            "landmark", ascending=True)
+
+        if len(edge_pts) != len(dist_pts):  # check for any non-pairs
+            print(
+                f"Skipping {image}: number of edge points "
+                + f"({len(edge_pts)}) does not match number of "
+                + f"distal points ({len(dist_pts)})")
+            continue
+
+        ray_dists = np.linalg.norm(  # get distances between ray pairs in mm
+            edge_pts[["x_mm", "y_mm"]].values -
+            dist_pts[["x_mm", "y_mm"]].values, axis=1)
+        ray_dat = pd.DataFrame({
+            "id": f_lmks_i["id"].iloc[0],
+            "date": f_lmks_i["date"].iloc[0],
+            "days": f_lmks_i["days"].iloc[0],
+            "idx": f_lmks_i["idx"].iloc[0],
+            "ray_idx": range(0, len(ray_dists)),  # expected order a->p
+            "ray_len_mm": ray_dists
+        })
+        ray_lens.append(ray_dat)
+    ray_lens = pd.concat(ray_lens, axis=0, ignore_index=True)
+    print(ray_lens)
+    # remove outliers
+    ray_lens = ray_lens[ray_lens["ray_len_mm"] < 10]
+
+    # Plot ray length over time for each ray for each fish
+
+    fig, axs = plt.subplots(figsize=(8, 4), nrows=2, ncols=6,
+                            layout="constrained", sharex=True, sharey=True)
+
+    reg_slopes = []
+    labels, handles = [], []
+    for i, ray_idx in enumerate(sorted(ray_lens["ray_idx"].unique())):
+        ax = axs.flatten()[i]
+        ray_i_lens = ray_lens[ray_lens["ray_idx"] == ray_idx]
+        for fish_id in ray_i_lens["id"].unique():
+            ray_lens_ij = ray_i_lens[ray_i_lens["id"] == fish_id]
+            ax.plot(ray_lens_ij["days"], ray_lens_ij["ray_len_mm"],
+                    marker='o', alpha=0.3, label=f"{fish_id}", markersize=2)
+            if fish_id not in labels:
+                labels.append(fish_id)
+                handles.append(ax.lines[-1])  # get last line added to ax
+
+        # fit LMM see https://en.wikipedia.org/wiki/Mixed_model
+        model = smf.mixedlm("ray_len_mm ~ days", data=ray_i_lens,
+                            groups=ray_i_lens["id"],
+                            # re_formula="~days", # for random slopes
+                            ).fit()
+        pred = model.predict(pd.DataFrame({"days": np.linspace(
+            0, ray_i_lens["days"].max(), ray_i_lens["days"].max()+1)}))
+
+        print(pred)
+        print(model.summary())
+        reg_slopes.append(
+            pd.DataFrame({"ray": ray_idx, "slope": model.params["days"],
+                          "ci_lower": model.conf_int().loc["days"][0],
+                          "ci_upper": model.conf_int().loc["days"][1],
+                          "pval": model.pvalues["days"]}, index=[0]))
+
+        ax.plot(pred, color='black',
+                linestyle='--', label='Linear regression')
+
+        text = (f"N={len(ray_i_lens['id'].unique())}" + "\n" +
+                f"Slope={model.params['days']:.3f} mm/day")
+        ax.text(0.95, 0.05, text, transform=ax.transAxes,
+                ha="right", fontsize=6)
+        ax.grid(alpha=0.3)
+        ax.set_title(f"Ray {ray_idx}", fontsize=8)
+
+    labels.append("Linear\nregression")
+    handles.append(plt.Line2D([0], [0], color='black', linestyle='--'))
+    fig.supxlabel("Days since first image")
+    fig.supylabel("Ray length (mm)")
+    fig.legend(handles=handles, labels=labels,
+               title="Fish ID", fontsize=6, ncol=1, loc='outside right')
+
+    plt.savefig("ray_len_over_time.pdf", bbox_inches='tight')
+    plt.show()
+
+    reg_slopes = pd.concat(reg_slopes)
+    print(reg_slopes)
+
+    fig, ax = plt.subplots()
+    ax.scatter(reg_slopes["ray"], reg_slopes["slope"])
+    ax.errorbar(reg_slopes["ray"], reg_slopes["slope"],
+                yerr=[reg_slopes["slope"] - reg_slopes["ci_lower"],
+                      reg_slopes["ci_upper"] - reg_slopes["slope"]],
+                fmt='o', capsize=3)
+    ax.set_title("Fin ray growth rates\nmixed effects model with 95% CI")
+    ax.grid(alpha=0.3)
+    ax.set_xlabel("Ray index (from anterior to posterior)")
+    ax.set_ylabel("Growth rate (mm/day)")
+    plt.savefig("ray_growth_rates.pdf", bbox_inches='tight')
     plt.show()
 
 
@@ -809,71 +933,77 @@ def compress_pngs(dir_name):
             img = img.convert("RGB")  # JPEG does not support transparency
             img.save(dst_path, "JPEG", optimize=True, quality=95)
 
-# def get_wallnorms(lmks, spacing=0.01):
-#     """Compute midpoint of mesh line segements and associated
-#     normal vector facing away from the mesh interior.
-#     Args:
-#         lmks (pd.DataFrame): DataFrame containing landmark data for
-#             a single fish image.
-#         spacing (float): Desired spacing between wall nodes in mm.
-#             Should be less than the average distance between
-#             cells in the tissue to prevent leakage.
-#     Returns:
-#         lmks_norm (pd.DataFrame): DataFrame with additional rows for
-#             wall midpoints and normal vectors.
-#     """
-#     # Get coordinates as a closed loop
-#     coords = lmks[["x_mm", "y_mm"]].values
-#     coords = np.vstack([coords, coords[0]])  # close the loop
 
-#     # Compute segment lengths
-#     seg_lengths = np.linalg.norm(np.diff(coords, axis=0), axis=1)
-#     cum_lengths = np.concatenate([[0], np.cumsum(seg_lengths)])
-#     total_length = cum_lengths[-1]
+def print_help():
+    """Print help message and exit."""
+    help_text = """
+    Usage: python img_handler.py [options]
+
+    Options:
+        -h              Show this help message and exit
+        -d [directory]  Specify working directory
+        -f [function]   Specify function to run (0-7)
+                        0 ...load images from directory and count taxa
+                        1 ...run landmarking GUI on images in directory
+                        2 ...convert landmarks CSV to VTK files
+                        3 ...visualise landmark VTK files
+                        4 ...visualise landmarks layered plot
+                        5 ...plot anterior-posterior length over time
+                        6 ...plot fin ray length over time
+                        7 ...compress PNG images in directory to small JPG
+    """
+    print(help_text)
+    sys.exit()
 
 
-#     # Generate positions along the perimeter at constant spacing
-#     n_nodes = int(np.floor(total_length / spacing))
-#     wall_norms = []
-#     for i in range(n_nodes):
-#         target_dist = i * spacing
-#         # Find which segment this falls in
-#         seg_idx = np.searchsorted(cum_lengths, target_dist, side='right') - 1
-#         seg_start = coords[seg_idx]
-#         seg_end = coords[seg_idx + 1]
-#         seg_len = seg_lengths[seg_idx]
-#         frac = (target_dist - cum_lengths[seg_idx]) / seg_len
-#         node = seg_start + frac * (seg_end - seg_start)
-#         # Normal vector for this segment
-#         norm = np.array([seg_end[1] - seg_start[1], -
-#                         1 * (seg_end[0] - seg_start[0])])
-#         norm /= np.linalg.norm(norm)
-#         wall_norms.append({
-#             "x_mm": node[0],
-#             "y_mm": node[1],
-#             "x_pol": norm[0],
-#             "y_pol": norm[1],
-#             "type": "w_node"
-#         })
-#     wall_norms = pd.DataFrame(wall_norms)
-#     lmks_norm = pd.concat([lmks, wall_norms], axis=0, ignore_index=True)
-#     lmks_norm[["x_pol", "y_pol"]] = lmks_norm[["x_pol", "y_pol"]].fillna(0.0)
-#     return lmks_norm
 if __name__ == "__main__":
-    # dir_path = "wild_data"
 
-    # img_paths = load_imgs_from_directory(dir_path)
-    # count_taxa(img_paths)
+    args = sys.argv[1:]
+    if "-h" in args:
+        print_help()
 
-    # lm = Landmarker("adult_benthic_all_images")
-    # lm.run(start_idx=START_FROM)
+    if "-d" in args:
+        WD = args[args.index("-d") + 1].rstrip("/")
+    if "-f" in args:
+        FUNC = int(args[args.index("-f") + 1])
+        if FUNC == 0:
+            img_paths = load_imgs_from_directory(WD)
+            count_taxa(img_paths)
+        elif FUNC == 1:
+            lm = Landmarker(WD)
+            lm.run(start_idx=START_FROM)
+        elif FUNC == 2:
+            landmarks_to_vtk(WD + "/lmks.csv",
+                             wallnodes=False, landmarks=True)
+        elif FUNC == 3:
+            visualise_landmark_vtks(WD)
+        elif FUNC == 4:
+            visualise_landmarks_layered(WD)
+        elif FUNC == 5:
+            ap_len_over_time(WD + "/lmks.csv")
+        elif FUNC == 6:
+            ray_len_over_time(WD + "/lmks.csv")
+        elif FUNC == 7:
+            compress_pngs(WD)
+        else:
+            print_help()
+    else:
+        print_help()
 
-    # landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv",
-    #                  wallnodes=False, landmarks=True)
-    # visualise_landmark_vtks("lmk_DA-1-10_12-09-25")
+        # dir_path = "wild_data"
 
-    # landmarks_to_vtk("lmks_all/lmks.csv")
-    # visualise_landmark_vtks("lmks_all")
-    # visualise_landmarks_layered("lmks_all")
-    compress_pngs("adult_benthic_all_images")
+        # img_paths = load_imgs_from_directory(dir_path)
+        # count_taxa(img_paths)
+
+        # lm = Landmarker("adult_benthic_all_images")
+        # lm.run(start_idx=START_FROM)
+
+        # landmarks_to_vtk("lmk_DA-1-10_12-09-25/landmarks.csv",
+        #                  wallnodes=False, landmarks=True)
+        # visualise_landmark_vtks("lmk_DA-1-10_12-09-25")
+
+        # landmarks_to_vtk("lmks_all/lmks.csv")
+        # visualise_landmark_vtks("lmks_all")
+        # visualise_landmarks_layered("lmks_all")
+        # compress_pngs("adult_benthic_all_images")
     # ap_len_over_time("lmks_all/lmks.csv")
