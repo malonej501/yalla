@@ -250,12 +250,13 @@ public:
     Mesh_d mesh;
     int n_facets;
     Fin(std::string file_name, std::string out_name);
-    void grow(float amount);
+    float3 grow(float amount);
     void write_vtk();
     std::string out_name;
     int time_step = 0;
     float3 get_maximum();
     float3 get_minimum();
+    float get_ap_len();
 };
 
 Fin::Fin(std::string file_name, std::string out_name = "NONE")
@@ -269,22 +270,31 @@ Fin::Fin(std::string file_name, std::string out_name = "NONE")
     this->out_name = out_name;
 }
 
-void Fin::grow(float amount)
+float3 Fin::grow(float amount)
 {
-    for (int i = 0; i < n_facets; ++i) {  // don't scale in z
-        h_facets[i].V0.x *= amount;
-        h_facets[i].V0.y *= amount;
-        h_facets[i].V1.x *= amount;
-        h_facets[i].V1.y *= amount;
-        h_facets[i].V2.x *= amount;
-        h_facets[i].V2.y *= amount;
-        // z remains unchanged
+    float3 prev_max = get_maximum();
+    float3 prev_min = get_minimum();
+    float3 prev_size = prev_max - prev_min;
+    float3 new_size = prev_size + make_float3(amount, amount, 0.0f);
+    float stretchfactor_x = (new_size.x) / (prev_size.x);
+    float stretchfactor_y = (new_size.y) / (prev_size.y);
+
+    for (int i = 0; i < n_facets; ++i) {      // don't scale in z
+        h_facets[i].V0.x *= stretchfactor_x;  // scale only by xsf for isotropy
+        h_facets[i].V0.y *= stretchfactor_x;
+        h_facets[i].V1.x *= stretchfactor_x;
+        h_facets[i].V1.y *= stretchfactor_x;
+        h_facets[i].V2.x *= stretchfactor_x;
+        h_facets[i].V2.y *= stretchfactor_x;
+
         float3 edge1 = h_facets[i].V1 - h_facets[i].V0;
         float3 edge2 = h_facets[i].V2 - h_facets[i].V0;
         h_facets[i].calculate_normal();
     }
     cudaMemcpy(mesh.d_facets, h_facets.data(), n_facets * sizeof(Triangle_d),
         cudaMemcpyHostToDevice);
+
+    return make_float3(stretchfactor_x, stretchfactor_y, 1.0f);
 }
 
 void Fin::write_vtk()
@@ -311,7 +321,7 @@ void Fin::write_vtk()
 }
 
 
-float3 Fin::get_maximum()
+float3 Fin::get_maximum()  // this returns the axis aligned maximum corner
 {
     float3 max_pt = make_float3(-1e30f, -1e30f, -1e30f);
     for (const auto& tri : h_facets) {
@@ -331,4 +341,18 @@ float3 Fin::get_minimum()
         min_pt.z = fminf(min_pt.z, fminf(tri.V0.z, fminf(tri.V1.z, tri.V2.z)));
     }
     return min_pt;
+}
+
+float Fin::get_ap_len()
+{
+    // along proximal ap axis
+    float max_x_at_y0 = 0.0f;
+    for (const auto& tri : h_facets) {
+        const float ys[3] = {tri.V0.y, tri.V1.y, tri.V2.y};
+        if (ys[0] == 0.0f && ys[1] == 0.0f && ys[2] == 0.0f) {  // at y=0
+            const float xs[3] = {tri.V0.x, tri.V1.x, tri.V2.x};
+            max_x_at_y0 = fmaxf(max_x_at_y0, fmaxf(xs[0], fmaxf(xs[1], xs[2])));
+        }
+    }
+    return max_x_at_y0;
 }
