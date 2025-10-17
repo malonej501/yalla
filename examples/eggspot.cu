@@ -400,13 +400,13 @@ __global__ void wall_forces_new(
 }
 
 template<typename Pt>
-__global__ void grow_cells(int n_cells, Pt* d_X, float amount)
+__global__ void grow_cells(int n_cells, Pt* d_X, float3 stretch_factors)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
-    d_X[i].x *= amount;
-    d_X[i].y *= amount;
+    d_X[i].x *= stretch_factors.x;
+    d_X[i].y *= stretch_factors.x;
     // z remains unchanged
 }
 
@@ -660,6 +660,11 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     output.write_property(in_slow);
     output.write_field(cells, "u", &Cell::u);  // write u of each cell to vtk
     output.write_field(cells, "v", &Cell::v);
+    printf("Initial fin max: %f, %f, %f\n", fin.get_maximum().x,
+        fin.get_maximum().y, fin.get_maximum().z);
+    printf("Initial fin min: %f, %f, %f\n", fin.get_minimum().x,
+        fin.get_minimum().y, fin.get_minimum().z);
+    printf("Initial ap len: %f\n", fin.get_ap_len());
 
     fin.write_vtk();
 
@@ -667,13 +672,19 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
         if (time_step > 0 && time_step % 10 == 0) {
-            // std::string vtk_filename = wall_files[int(time_step / 100)];
             if (h_pm.t_grow_switch) {
-                fin.grow(h_pm.t_growth_rate);
+                Fin prevfin = fin;  // store previous fin state
+                float3 stretch_factors =
+                    fin.grow(h_pm.t_growth_rate * 0.2 * 10);
+                printf("fin max: %f, %f, %f\n", fin.get_maximum().x,
+                    fin.get_maximum().y, fin.get_maximum().z);
+                printf("fin min: %f, %f, %f\n", fin.get_minimum().x,
+                    fin.get_minimum().y, fin.get_minimum().z);
+                printf("ap len: %f\n", fin.get_ap_len());
                 // growth rate is per day dt is 0.2 days so multiply by 0.2
                 // multiply by 10 because growth only occurs every 10 timesteps
                 grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X, h_pm.t_growth_rate);
+                    cells.get_d_n(), cells.d_X, stretch_factors);
                 update_slow_reg(fin, slow_reg);
                 cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
                     cudaMemcpyHostToDevice);  // copy to device
