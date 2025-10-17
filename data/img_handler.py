@@ -757,7 +757,7 @@ def ap_len_over_time(path):
         filt = max_lens[max_lens["id"] == i]
         filt = filt[filt["ap_len_mm"] < 10]  # filter out bad data
         ax.plot(filt["days"], filt["ap_len_mm"], marker='o', label=i,
-                alpha=0.3)
+                alpha=0.3, markersize=3)
 
     ax.set_xlabel("Days since first image")
     ax.set_ylabel("AP length (mm)")
@@ -768,7 +768,8 @@ def ap_len_over_time(path):
                         groups=max_lens["id"],
                         # re_formula="~days", # for random slopes
                         ).fit()
-    pred = model.predict(max_lens)
+    pred = model.predict(pd.DataFrame({"days": np.linspace(
+        0, max_lens["days"].max(), max_lens["days"].max()+1)}))
     print(model.summary())
     ci = model.conf_int(alpha=0.05)
     print(ci)
@@ -778,15 +779,15 @@ def ap_len_over_time(path):
              np.arange(0, max_lens["days"].max()))
     fit_l = (ci_int[0] + ci_slope[0] *
              np.arange(0, max_lens["days"].max()))
-    ax.plot(max_lens["days"], pred, color='black',
+    ax.plot(pred, color='black',
             linestyle='--', label='Linear regression')
     ax.fill_between(np.arange(0, max_lens["days"].max()), fit_l,
                     fit_u, color='gray',
                     alpha=0.5, label='95% Confidence Interval')
-    ax.text(0.95, 0.05, f"Slope: {model.params['days']:.3f} mm/day",  # +
-            # f"\np-value: {model.pvalues['days']:.3e}",
-            transform=ax.transAxes, va='bottom', ha="right",)
-    plt.savefig("ap_len_over_time.svg")
+    text = (f"Slope: {model.params['days']:.3f} mm/day" + "\n" +
+            f"Intercept: {model.params['Intercept']:.3f} mm")
+    ax.text(0.95, 0.05, text, transform=ax.transAxes, va='bottom', ha="right",)
+    plt.savefig("ap_len_over_time.pdf", bbox_inches='tight')
     plt.show()
 
 
