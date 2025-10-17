@@ -7,9 +7,9 @@ from vedo import *
 class Fin:
     """Class to generate a fin shape with rays."""
 
-    def __init__(self, nrays=11, ap=3, height=2, smooth=1, theta=140):
+    def __init__(self, nrays=11, ap=2.5, height=2, smooth=1, theta=140):
         self.nrays = nrays
-        self.ray_width = 0.05  # width of rays
+        self.ray_width = 0.05  # width of rays n.b. this is altered later by scaling
         self.ap = ap  # anterior-posterior length at proximal side
         self.height = height  # control fin height
         self.smooth = smooth  # smoothness factor for fin edge
@@ -56,7 +56,7 @@ class Fin:
         self.p_verts = list(p_verts[1:-1])
         self.d_verts = list(d_verts[1:-1])
 
-        # translate fin such that top left is at 0,0,0 again
+        # translate fin such that anterior proximal is at x=0
         xoff = self.p_verts[-1][-1][0]
         for vpair in self.p_verts:
             for v in vpair:
@@ -64,6 +64,13 @@ class Fin:
         for vpair in self.d_verts:
             for v in vpair:
                 v[0] -= xoff
+
+        # scale fin such that posterior proximal vertex is at x=ap
+        sf = ap / self.p_verts[0][0][0]
+        self.p_verts = [[[v[0] * sf, v[1] * sf, v[2] * sf] for v in pair]
+                        for pair in self.p_verts]
+        self.d_verts = [[[v[0] * sf, v[1] * sf, v[2] * sf] for v in pair]
+                        for pair in self.d_verts]
 
         # Rays as quads between proximal and distal vertices
         for i, (p_pair, d_pair) in enumerate(
@@ -81,12 +88,10 @@ class Fin:
 
     def grow(self):
         amount = 1.1  # ray length multiplier
-        print(self.rays)
         # for ray in self.rays:
         #     ray[1][0] -= amount * np.cos(np.radians(self.theta))
         #     ray[1][1] -= amount * np.sin(np.radians(self.theta))
         for ray in self.rays:
-            print(ray)
             ray[0][0] *= amount
 
             ray[1][0] *= amount
