@@ -400,13 +400,13 @@ __global__ void wall_forces_new(
 }
 
 template<typename Pt>
-__global__ void grow_cells(int n_cells, Pt* d_X, float3 stretch_factors)
+__global__ void grow_cells(int n_cells, Pt* d_X, float stretchfactor)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
-    d_X[i].x *= stretch_factors.x;
-    d_X[i].y *= stretch_factors.x;
+    d_X[i].x *= stretchfactor;
+    d_X[i].y *= stretchfactor;
     // z remains unchanged
 }
 
@@ -669,13 +669,12 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     fin.write_vtk();
 
 
-    // Main simulation loop
+    // Main simulation loop - n.b. we also write the initial condition
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
         if (time_step > 0 && time_step % 10 == 0) {
             if (h_pm.t_grow_switch) {
                 Fin prevfin = fin;  // store previous fin state
-                float3 stretch_factors =
-                    fin.grow(h_pm.t_growth_rate * 0.2 * 10);
+                float stretchfactor = fin.grow(h_pm.t_growth_rate * 0.2 * 10);
                 printf("fin max: %f, %f, %f\n", fin.get_maximum().x,
                     fin.get_maximum().y, fin.get_maximum().z);
                 printf("fin min: %f, %f, %f\n", fin.get_minimum().x,
@@ -684,7 +683,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
                 // growth rate is per day dt is 0.2 days so multiply by 0.2
                 // multiply by 10 because growth only occurs every 10 timesteps
                 grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X, stretch_factors);
+                    cells.get_d_n(), cells.d_X, stretchfactor);
                 update_slow_reg(fin, slow_reg);
                 cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
                     cudaMemcpyHostToDevice);  // copy to device

@@ -250,7 +250,7 @@ public:
     Mesh_d mesh;
     int n_facets;
     Fin(std::string file_name, std::string out_name);
-    float3 grow(float amount);
+    float grow(float amount);
     void write_vtk();
     std::string out_name;
     int time_step = 0;
@@ -270,22 +270,19 @@ Fin::Fin(std::string file_name, std::string out_name = "NONE")
     this->out_name = out_name;
 }
 
-float3 Fin::grow(float amount)
+float Fin::grow(float amount)
 {
-    float3 prev_max = get_maximum();
-    float3 prev_min = get_minimum();
-    float3 prev_size = prev_max - prev_min;
-    float3 new_size = prev_size + make_float3(amount, amount, 0.0f);
-    float stretchfactor_x = (new_size.x) / (prev_size.x);
-    float stretchfactor_y = (new_size.y) / (prev_size.y);
+    float prev_ap = get_ap_len();
+    float new_ap = prev_ap + amount;
+    float stretchfactor = new_ap / prev_ap;
 
-    for (int i = 0; i < n_facets; ++i) {      // don't scale in z
-        h_facets[i].V0.x *= stretchfactor_x;  // scale only by xsf for isotropy
-        h_facets[i].V0.y *= stretchfactor_x;
-        h_facets[i].V1.x *= stretchfactor_x;
-        h_facets[i].V1.y *= stretchfactor_x;
-        h_facets[i].V2.x *= stretchfactor_x;
-        h_facets[i].V2.y *= stretchfactor_x;
+    for (int i = 0; i < n_facets; ++i) {    // don't scale in z
+        h_facets[i].V0.x *= stretchfactor;  // scale only by xsf for isotropy
+        h_facets[i].V0.y *= stretchfactor;
+        h_facets[i].V1.x *= stretchfactor;
+        h_facets[i].V1.y *= stretchfactor;
+        h_facets[i].V2.x *= stretchfactor;
+        h_facets[i].V2.y *= stretchfactor;
 
         float3 edge1 = h_facets[i].V1 - h_facets[i].V0;
         float3 edge2 = h_facets[i].V2 - h_facets[i].V0;
@@ -294,7 +291,7 @@ float3 Fin::grow(float amount)
     cudaMemcpy(mesh.d_facets, h_facets.data(), n_facets * sizeof(Triangle_d),
         cudaMemcpyHostToDevice);
 
-    return make_float3(stretchfactor_x, stretchfactor_y, 1.0f);
+    return stretchfactor;
 }
 
 void Fin::write_vtk()
