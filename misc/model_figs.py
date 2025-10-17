@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import pandas as pd
 import sympy as sp
@@ -9,27 +10,35 @@ plt.style.use("../misc/stylesheet.mplstyle")
 
 
 PLOT = 0  # 0: single force, 1: force for all cells, 2: forces and potentials
+SET = 0  # 0: default params, 1: volk params
 INT_TYPE = 1  # 0: attraction, 1: pure repulsion
 EXPORT = True  # save plot as pdf
 V = True  # verbose
 
 
-def get_params(itype):
+def get_params(itype, set=0):
     """
     Get params from file. Returns the parameters for the force equation.
+    itype: interaction type (0: spot-spot, 1: default)
+    set: parameter set (0: default, 1: volk)
     """
-    pms = pd.read_csv("../params/default.csv")
+    if set == 1:
+        pms = pd.read_csv("../params/volk_params.csv")
+    else:
+        pms = pd.read_csv("../params/default.csv")
 
     r_max = float(pms.loc[pms["param"] == "r_max", "value"].values[0])
     A, a, R, r = None, None, None, None
     if itype == 0:
-        A = float(pms.loc[pms["param"] == "Aii", "value"].values[0])
-        a = float(pms.loc[pms["param"] == "aii", "value"].values[0])
+        if set == 0:
+            A = float(pms.loc[pms["param"] == "Aii", "value"].values[0])
+            a = float(pms.loc[pms["param"] == "aii", "value"].values[0])
         R = float(pms.loc[pms["param"] == "Rii", "value"].values[0])
         r = float(pms.loc[pms["param"] == "rii", "value"].values[0])
     elif itype == 1:
-        A = float(pms.loc[pms["param"] == "Add", "value"].values[0])
-        a = float(pms.loc[pms["param"] == "add", "value"].values[0])
+        if set == 0:
+            A = float(pms.loc[pms["param"] == "Add", "value"].values[0])
+            a = float(pms.loc[pms["param"] == "add", "value"].values[0])
         R = float(pms.loc[pms["param"] == "Rdd", "value"].values[0])
         r = float(pms.loc[pms["param"] == "rdd", "value"].values[0])
     if V:
@@ -40,23 +49,27 @@ def get_params(itype):
     return r_max, A, a, R, r
 
 
-def force_equation():
+def force_equation(mode=1):
     """Returns the force equation in a symbolic form."""
 
-    # Define symbols
-    A, a, R, r, d = sp.symbols('A a R r d')
+    if mode == 0:  # volkening 2015
+        # Define symbols
+        A, a, R, r, d = sp.symbols('A a R r d')
 
-    # term1 = A / a * sp.exp(-d / a)
-    # term2 = R / r * sp.exp(-d / r)
-    term1 = R * sp.exp(-d / r)  # from Volkening 2015 supp inf.
-    term2 = A * sp.exp(-d / a)
+        # term1 = A / a * sp.exp(-d / a)
+        # term2 = R / r * sp.exp(-d / r)
+        term1 = R * sp.exp(-d / r)  # from Volkening 2015 supp inf.
+        term2 = A * sp.exp(-d / a)
 
-    f_pot = term1 - term2  # potential force
-    f = sp.diff(f_pot, d)  # force
+        f_pot = term1 - term2  # potential force
+        f = sp.diff(f_pot, d)  # force
 
-    if V:
-        print("Force potential:", f_pot)
-        print("Force:", f)
+        if V:
+            print("Force potential:", f_pot)
+            print("Force:", f)
+    elif mode == 1:  # volkening 2018
+        R, r, d = sp.symbols('R r d')
+        f = -R * (0.5 + (0.5 * sp.tanh((r - d) * 100)))
     return f
 
 
@@ -79,24 +92,35 @@ def plot_force_equation():
 
     # Define parameters
     A, a, R, r, d = sp.symbols('A a R r d')
-    r_max_val, A_val, a_val, R_val, r_val = get_params(INT_TYPE)
+    r_max_val, A_val, a_val, R_val, r_val = get_params(INT_TYPE, SET)
     d_vals = np.linspace(0, r_max_val, 100)  # range for d
     ints = ["spot-spot", "default"]
 
     # Calculate force values
-    f_vals = [force_equation().subs({
-        A: A_val, a: a_val, R: R_val, r: r_val, d: d_val
-    }) for d_val in d_vals]
+    if set == 0:
+        f_vals = [force_equation().subs({
+            A: A_val, a: a_val, R: R_val, r: r_val, d: d_val
+        }) for d_val in d_vals]
+    else:
+        f_vals = [force_equation(mode=1).subs({
+            R: R_val, r: r_val, d: d_val
+        }) for d_val in d_vals]
+    print(force_equation())
 
     # Plotting
     fig, ax = plt.subplots(figsize=(2.7, 2.5))
     for itype in [0, 1]:
-        r_max_val, A_val, a_val, R_val, r_val = get_params(itype)
-        f_vals = [force_equation().subs({
-            A: A_val, a: a_val, R: R_val, r: r_val, d: d_val
-        }) for d_val in d_vals]
+        r_max_val, A_val, a_val, R_val, r_val = get_params(itype, SET)
+        if set == 0:
+            f_vals = [force_equation().subs({
+                A: A_val, a: a_val, R: R_val, r: r_val, d: d_val
+            }) for d_val in d_vals]
+        else:
+            f_vals = [force_equation(mode=1).subs({
+                R: R_val, r: r_val, d: d_val
+            }) for d_val in d_vals]
         plt.plot(d_vals, f_vals, label=ints[itype], color=f"C{itype}")
-    plt.ylim(-0.05, 0.005)
+    # plt.ylim(-0.005, 0.00)
     plt.legend(title="Interaction", loc="lower right")
     plt.xlabel("Separation distance (mm)")
     plt.ylabel("Force (mm$t^{-1}$)")
@@ -109,7 +133,7 @@ def plot_force_equation():
 
     plt.tight_layout()
     if EXPORT:
-        plt.savefig('force_equation_tex.pdf')
+        plt.savefig('force_equation_tex.svg')
     plt.show()
 
 
@@ -198,7 +222,14 @@ def plot_force_and_potential():
 
 
 if __name__ == "__main__":
+    # collect bash arguments
+    args = sys.argv[1:]
+    # if "-h" in args:
+    #     print_help()
     # force_equation()
+    if "-s" in args:
+        SET = int(args[args.index("-s") + 1])
+        print(f"Using parameter set {['default', 'volkening'][SET]}")
     if PLOT == 0:
         plot_force_equation()
     elif PLOT == 1:
