@@ -23,6 +23,7 @@ from PIL import Image
 FUNC = 0
 WD = "../run/saves/"
 NSHOW = 0  # no. fins to show in real fin comparison
+EXPORT = False
 
 
 class Frame():
@@ -234,7 +235,7 @@ class Realfin():
             ax.imshow(sb_overlay, alpha=0.5)  # overlay scale bar
             for r in self.regions_sig_sb:
                 y0, x0 = r.centroid
-                orientation = r.orientation
+                orientation = -r.orientation
                 x1 = x0 + math.sin(orientation) * 0.5 * r.major_axis_length
                 y1 = y0 - math.cos(orientation) * 0.5 * r.major_axis_length
                 x2 = x0 - math.sin(orientation) * 0.5 * r.major_axis_length
@@ -534,7 +535,7 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
     if export:
         plt.savefig(f"real_seg_comp_{n}_{mode}.pdf", dpi=300)
 
-    plt.show()
+    # plt.show()
 
 
 def tissue_properties(run_id):
@@ -592,6 +593,7 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
                                 layout="constrained", sharex=True, sharey=True)
     axs = axs.flatten()
 
+    handles, labels = [], []
     for i, fr in enumerate(frames):
         frame = Frame(run_id=run_id, wid=0, step=0, frame=fr)
         fr_dat = {"x": frame.mesh.vertices[:, 0],
@@ -600,11 +602,14 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
         fr_dat = pd.DataFrame(fr_dat)
         for ctype in fr_dat["type"].unique():
             mask = fr_dat["type"] == ctype
-            axs[i].scatter(fr_dat["x"][mask], fr_dat["y"][mask], s=1,
-                           label=ctypes[ctype], c=plt.cm.viridis(
-                               (ctype - cell_types.min()) /
-                               (cell_types.max() - cell_types.min())),
-                           rasterized=True)  # rasterize for large data
+            sc = axs[i].scatter(fr_dat["x"][mask], fr_dat["y"][mask], s=1,
+                                label=ctypes[ctype], c=plt.cm.viridis(
+                (ctype - cell_types.min()) /
+                (cell_types.max() - cell_types.min())),
+                rasterized=True)  # rasterize for large data
+            if ctypes[ctype] not in labels:
+                handles.append(sc)
+                labels.append(ctypes[ctype])
         if sb:  # scale bar 1mm
             x0, x1 = axs[i].get_xlim()
             y0, y1 = axs[i].get_ylim()
@@ -618,8 +623,7 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
         axs[i].set_yticks([])
         axs[i].axis("off")
 
-    # fig.colorbar(sc, ax=axs, label="Cell Type", orientation="vertical")
-    leg = fig.legend(*axs[3].get_legend_handles_labels(),
+    leg = fig.legend(handles, labels,
                      loc="outside lower center",
                      title="Cell Type", ncol=3)
     for handle in leg.legend_handles:
@@ -648,6 +652,7 @@ def print_help():
                         5 ...analyse_realfins_longitudinal
         -d [directory]  Specify the directory contining data to plot.
         -n [int]        Specify the number of fins to show function 3
+        -e              Export plots to file where applicable.
 
     Description:
         This script provides functionalities to analyze and visualize
@@ -657,6 +662,7 @@ def print_help():
         and real fins.
     """
     print(help_text)
+    sys.exit()
 
 
 if __name__ == "__main__":
@@ -664,11 +670,12 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     if "-h" in args:
         print_help()
-        sys.exit()
     if "-d" in args:
         WD = args[args.index("-d") + 1].rstrip("/")
     if "-n" in args:
         NSHOW = int(args[args.index("-n") + 1])
+    if "-e" in args:
+        EXPORT = True
     if "-f" in args:
         FUNC = int(args[args.index("-f") + 1])
         if FUNC == 0:
@@ -678,7 +685,7 @@ if __name__ == "__main__":
         elif FUNC == 2:
             plot_segmented_fins()
         elif FUNC == 3:
-            compare_segmented_real(WD, nplot=NSHOW)
+            compare_segmented_real(WD, nplot=NSHOW, export=EXPORT)
         elif FUNC == 4:
             analyse_realfins(WD)
         elif FUNC == 5:
