@@ -11,6 +11,7 @@ import numpy as np
 import alphashape
 from sklearn.cluster import DBSCAN
 from pyvirtualdisplay import Display
+from scipy.spatial.distance import pdist
 
 # Default parameters
 
@@ -22,6 +23,7 @@ ZOOM = 0.6  # define the how far the camera is out
 PT_SIZE = 12  # how large the cells are drawn
 ANIMATE = 2  # 0 = False, 1 = Matplotlib, 2 = Vedo
 SHOW_AX = True  # show axes
+CELLS = True  # render cells if present
 WALLS = True  # render walls if present
 FIN = True  # render fin mesh if present
 FOLDER_PATH = "../run/saves/test"  # default output folder
@@ -50,7 +52,7 @@ def render_frame():
     display.stop()
 
 
-def render_movie(walls=False, fin=False):
+def render_movie(walls=False, fin=False, cells=True):
     """Renders movie of growing tissue with one cell property colourised
     e.g. cell_type, u, mech_str"""
 
@@ -80,9 +82,10 @@ def render_movie(walls=False, fin=False):
     # Loop through the VTK files and visualize them
     for i, vtk in enumerate(VTKS):
 
-        pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
-        wpts = Points([])  # empty points object
+        pts, wpts = Points([]), Points([])  # empty points object
         fmesh = Mesh()  # empty mesh object
+        if cells:
+            pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
         if walls:
             wpts = Points(W_VTKS[i]).point_size(PT_SIZE * ZOOM).color("black")
         wnrms = Glyph(wpts, Arrow().scale(0.5), "normals", c="blue")
@@ -92,28 +95,33 @@ def render_movie(walls=False, fin=False):
 
         # lims = ((pts.bounds()[0],pts.bounds()[1]),
         # (pts.bounds()[2],pts.bounds()[3]))
-        if C_PROP == "cell_type":  # ensure cmap for c_type is constant
+        if C_PROP == "cell_type" and cells:  # ensure cmap for c_type is constant
             pts.cmap(cmap, C_PROP, vmin=min(cell_types),
                      vmax=max(cell_types))
-        else:
+        elif cells:
             pts.cmap(cmap, C_PROP)
         br = addons.ScalarBar(pts, title=C_PROP)
-        info = Text2D(
-            txt=(
+
+        info_str = f"i: {i}"
+        if cells:
+            info_str = (
                 f"i: {i}\n"
                 f"n: {len(pts.vertices)}\n" +
                 "".join([
-                    f"n_{cell_type}: {len(pts.pointdata['cell_type'][pts.pointdata['cell_type'] == cell_type])}\n"
+                    f"n_{cell_type}: {len(
+                        pts.pointdata['cell_type'][
+                            pts.pointdata['cell_type'] == cell_type])}\n"
                     for cell_type in cell_types
                 ])
-            ),
-            pos="bottom-left")
+            )
+        info = Text2D(txt=info_str, pos="bottom-left")
 
         pts.name = "cells"
         wpts.name = "wall_nodes"
         wnrms.name = "wall_normals"
         fmesh.name = "fin_mesh"
-        br.name = "bar"
+        if cells:
+            br.name = "bar"
         info.name = "info"
         frames.append((pts, wpts, wnrms, fmesh, br, info))
         # Add the mesh to the plotter
@@ -172,8 +180,9 @@ def render_movie(walls=False, fin=False):
             frames[k] = (pts, wpts, wnrms, fmesh, br, info)
 
     p.add_slider(slider1, 0, len(frames)-1, pos="top-right", value=len(frames))
-    p.add_slider(slider2, 0, len(pts.pointdata.keys())-1,
-                 pos="top-left", value=pts.pointdata.keys().index(C_PROP))
+    if cells:
+        p.add_slider(slider2, 0, len(pts.pointdata.keys())-1,
+                     pos="top-left", value=pts.pointdata.keys().index(C_PROP))
     p.interactive()
 
 
@@ -241,8 +250,10 @@ def tissue_stats():
     print(stats_df)
 
 
-def pattern_stats():
+def pattern_stats(fin=False):
     """Cluster spot cells and infer alpha shapes and shape stats"""
+
+    cell_types, max_bounds = tissue_properties()
 
     stats = []
     frames = []
@@ -268,7 +279,7 @@ def pattern_stats():
         n_clusters = len(unique_labels) - (1 if -1 in labels else 0)
         n_noise = list(labels).count(-1)  # noisy points are given the label -1
         # https://scikit-learn.org/1.5/modules/clustering.html#s
-        # ilhouette-coefficient
+        # silhouette-coefficient
         # s_coeff = metrics.silhouette_score(spot_cells, labels) # a higher
         # Silhouette Coefficient score relates to a model with better defined
         # clusters
@@ -276,14 +287,10 @@ def pattern_stats():
         core_samples_mask = np.zeros_like(labels, dtype=bool)
         core_samples_mask[db.core_sample_indices_] = True
 
-        a_shapes = []
-        areas = []
         # roundness is only computed for polygons - not lines, points etc.
-        roundnesses = []
+        a_shapes, areas, roundnesses, max_diams, tags = [], [], [], [], []
+        a_meshes, p_meshes = [], []  # alpha shapes & spot cell points
         n_poly = 0
-        tags = []
-        a_meshes = []  # the alpha shapes
-        p_meshes = []  # the spot cell points
         # return the coordinates of the cells in each cluster
         for l in unique_labels:
             class_member_mask = labels == l
@@ -322,15 +329,20 @@ def pattern_stats():
                 # 1 for perfect circle, 0 for non-circular
                 roundnesses.append(
                     (4 * math.pi * alpha_shape.area) / (perimeter**2))
+
+                max_diam = pdist(alpha_shape.exterior.coords).max()
+                max_diams.append(max_diam)
+
             if alpha_shape.geom_type == "LineString":
                 a_meshes.append(None)
                 tags.append(None)
                 roundnesses.append(0)  # if line roundness is 0
+                max_diams.append(0)
             if alpha_shape.geom_type == "Point":
                 a_meshes.append(None)
                 tags.append(None)
                 roundnesses.append(1)  # if point roundness is 1
-
+                max_diams.append(0)
         info = Text2D(
             txt=(f"i: {i}\n"
                  f"n_clusters: {len(unique_labels)}\n"
@@ -342,7 +354,13 @@ def pattern_stats():
             pos="bottom-left")
         info.name = "info"
 
-        frames.append((a_meshes, p_meshes, info, tags))
+        fmesh = Mesh()  # empty mesh object
+        if fin:
+            fmesh = Mesh(F_VTKS[i]).alpha(
+                0.1).linecolor("black").color("grey")
+            fmesh.name = "fin_mesh"
+
+        frames.append((a_meshes, p_meshes, fmesh, info, tags))
 
         stats.append({
             "frame": i,
@@ -353,7 +371,9 @@ def pattern_stats():
             "mean_area": np.mean(areas),
             "std_area": np.std(areas),
             "mean_roundness": np.mean(roundnesses),
-            "std_roundness": np.std(roundnesses)
+            "std_roundness": np.std(roundnesses),
+            "mean_max_diam": np.mean(max_diams),
+            "std_max_diam": np.std(max_diams),
         })
     stats_df = pd.DataFrame(stats)
     print("\nClustering and alpha shapes analysis complete.")
@@ -389,23 +409,26 @@ def pattern_stats():
                 size=(1200, 900), sharecam=False)
     # p = Plotter(interactive=False, shape=(2,3), sharecam=False)
     # p.show(zoom="tight")#,axes=13)
-    axs = Axes(xtitle="x", ytitle="y", ztitle="z",
-               xrange=(-3.75, 3.75), yrange=(-1.25, 1.25))
-    p.show(zoom="tight", axes=axs)
+    axes = Axes(xtitle="x", ytitle="y", ztitle="z",
+                xrange=(max_bounds[0], max_bounds[1]),
+                yrange=(max_bounds[2], max_bounds[3]))
+    p.show(zoom="tight", axes=axes)
     # p.at(0).zoom(ZOOM)
 
     for frame, fig in zip(frames, figs):
-        a_meshes, p_meshes, info, tags = frame
-        fig1, fig2, fig3, fig4 = fig
+        a_meshes, p_meshes, fmesh, info, tags = frame
+        fig1, fig2, fig3, fig4, fig5 = fig
 
         p.at(0).remove("a_mesh").add(a_meshes)
         p.at(0).remove("p_mesh").add(p_meshes)
+        p.at(0).remove("fin_mesh").add(fmesh)
         p.at(0).remove("info").add(info)
         p.at(0).remove("tag").add(tags)
-        p.at(1).remove("fig1").add(fig1).reset_camera(tight=0)
+        # p.at(1).remove("fig1").add(fig1).reset_camera(tight=0)
         p.at(2).remove("fig2").add(fig2).reset_camera(tight=0)
         p.at(3).remove("fig3").add(fig3).reset_camera(tight=0)
         p.at(4).remove("fig4").add(fig4).reset_camera(tight=0)
+        p.at(1).remove("fig5").add(fig5).reset_camera(tight=0)
         p.render()
         if EXPORT:
             v.add_frame()
@@ -415,10 +438,11 @@ def pattern_stats():
     def slider1(widget, _):
         val = widget.value  # get the slider current value
 
-        a_meshes, p_meshes, info, tags = frames[int(val)]
+        a_meshes, p_meshes, fmesh, info, tags = frames[int(val)]
 
         p.at(0).remove("a_mesh").add(a_meshes)
         p.at(0).remove("p_mesh").add(p_meshes)
+        p.at(0).remove("fin_mesh").add(fmesh)
         p.at(0).remove("info").add(info)
         p.at(0).remove("tag").add(tags)
 
@@ -427,11 +451,12 @@ def pattern_stats():
             p.at(1).remove("fig").add(fig).reset_camera(tight=0)
 
         if ANIMATE == 2:
-            fig1, fig2, fig3, fig4 = figs[int(val)]
-            p.at(1).remove("fig1").add(fig1)
+            fig1, fig2, fig3, fig4, fig5 = figs[int(val)]
+            # p.at(1).remove("fig1").add(fig1)
             p.at(2).remove("fig2").add(fig2)
             p.at(3).remove("fig3").add(fig3)
             p.at(4).remove("fig4").add(fig4)
+            p.at(1).remove("fig5").add(fig5)
 
         p.render()
 
@@ -444,7 +469,13 @@ def pattern_stats():
 
 def plot_alpha_shape_stats_vedo(d):
     """Plot the spot shape statistics over simulation timecourse from
-    dataframe of statistics using vedo"""
+    dataframe of statistics using vedo.
+    fig1 ... no. clusters
+    fig2 ... no. polygons
+    fig3 ... mean area
+    fig4 ... mean roundness
+    fig5 ... mean max diameter
+    """
 
     t = 2.0  # text scale
 
@@ -481,7 +512,16 @@ def plot_alpha_shape_stats_vedo(d):
         fig4 += Line(p0=(i, -1000, 0), p1=(i, 1000, 0), c="red")
         fig4.name = "fig4"
 
-        figs.append((fig1, fig2, fig3, fig4))
+        fig5 = pyplot.plot(np.array(d["frame"]),
+                           np.array(d["mean_max_diam"]),
+                           yerrors=np.array(d["std_max_diam"])+0.0000001,
+                           error_band=True, ec="grey",
+                           xtitle="i", ytitle="Mean max diameter",
+                           axes={"text_scale": t}, xlim=(0, None))
+        fig5 += Line(p0=(i, -1000, 0), p1=(i, 1000, 0), c="red")
+        fig5.name = "fig5"
+
+        figs.append((fig1, fig2, fig3, fig4, fig5))
 
     return figs
 
@@ -706,11 +746,14 @@ if __name__ == "__main__":
             if FIN and len(fin_vtks) > 0:
                 F_VTKS = load(fin_vtks)
             render_movie(walls=WALLS and len(wall_vtks) > 0,
-                         fin=FIN and len(fin_vtks) > 0)
+                         fin=FIN and len(fin_vtks) > 0,
+                         cells=CELLS)
         elif FUNC == 1:
             cell_vtks, wall_vtks, fin_vtks = get_vtks()
+            if FIN and len(fin_vtks) > 0:
+                F_VTKS = load(fin_vtks)
             VTKS = load(cell_vtks)
-            pattern_stats()
+            pattern_stats(fin=FIN)
         elif FUNC == 2:
             VTKS = load(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_*.vtk")
             render_frame()
