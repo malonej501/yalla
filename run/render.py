@@ -26,6 +26,7 @@ SHOW_AX = True  # show axes
 CELLS = True  # render cells if present
 WALLS = True  # render walls if present
 FIN = True  # render fin mesh if present
+RAYS = True  # render ray mesh if present
 FOLDER_PATH = "../run/saves/test"  # default output folder
 VTKS = None  # list of vtk files
 WALK_ID = 0  # defualt if only one tissue simulation
@@ -52,7 +53,7 @@ def render_frame():
     display.stop()
 
 
-def render_movie(walls=False, fin=False, cells=True):
+def render_movie(walls=False, fin=False, cells=True, ray=False):
     """Renders movie of growing tissue with one cell property colourised
     e.g. cell_type, u, mech_str"""
 
@@ -83,7 +84,7 @@ def render_movie(walls=False, fin=False, cells=True):
     for i, vtk in enumerate(VTKS):
 
         pts, wpts = Points([]), Points([])  # empty points object
-        fmesh = Mesh()  # empty mesh object
+        fmesh, rmesh = Mesh(), Mesh()  # empty mesh object
         if cells:
             pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
         if walls:
@@ -92,9 +93,12 @@ def render_movie(walls=False, fin=False, cells=True):
         if fin:
             fmesh = Mesh(F_VTKS[i]).alpha(
                 0.1).linecolor("black").color("grey")  # .wireframe()
+        if ray:
+            rmesh = Mesh(R_VTKS[i]).alpha(
+                0.1).linecolor("black").color("grey")  # .wireframe()
 
-        # lims = ((pts.bounds()[0],pts.bounds()[1]),
-        # (pts.bounds()[2],pts.bounds()[3]))
+            # lims = ((pts.bounds()[0],pts.bounds()[1]),
+            # (pts.bounds()[2],pts.bounds()[3]))
         if C_PROP == "cell_type" and cells:  # ensure cmap for c_type is constant
             pts.cmap(cmap, C_PROP, vmin=min(cell_types),
                      vmax=max(cell_types))
@@ -120,6 +124,7 @@ def render_movie(walls=False, fin=False, cells=True):
         wpts.name = "wall_nodes"
         wnrms.name = "wall_normals"
         fmesh.name = "fin_mesh"
+        rmesh.name = "ray_mesh"
         if cells:
             br.name = "bar"
         info.name = "info"
@@ -129,6 +134,7 @@ def render_movie(walls=False, fin=False, cells=True):
         p.remove("wall_nodes").add(wpts)
         p.remove("wall_normals").add(wnrms)
         p.remove("fin_mesh").add(fmesh)
+        p.remove("ray_mesh").add(rmesh)
         p.remove("info").add(info)
         p.remove("bar").add(br)
         # if i == 0:  # only add bar once to avoid flickering
@@ -149,6 +155,7 @@ def render_movie(walls=False, fin=False, cells=True):
         p.remove("wall_nodes").add(wpts)
         p.remove("wall_normals").add(wnrms)
         p.remove("fin_mesh").add(fmesh)
+        p.remove("ray_mesh").add(rmesh)
         p.remove("bar").add(br)
         p.remove("info").add(info)
 
@@ -683,10 +690,14 @@ def get_vtks():
         f"{FOLDER_PATH}") if i.endswith(".vtk") and "wall" in i),
         key=lambda x: int(os.path.splitext(x)[0].split("_")[-1]))
     fin = sorted((f"{FOLDER_PATH}/{i}" for i in os.listdir(
-        f"{FOLDER_PATH}") if i.endswith(".vtk") and "fin" in i),
+        f"{FOLDER_PATH}") if i.endswith(".vtk") and "fin" in i and
+        "ray" not in i),
+        key=lambda x: int(os.path.splitext(x)[0].split("_")[-1]))
+    rays = sorted((f"{FOLDER_PATH}/{i}" for i in os.listdir(
+        f"{FOLDER_PATH}") if i.endswith(".vtk") and "fin_ray" in i),
         key=lambda x: int(os.path.splitext(x)[0].split("_")[-1]))
 
-    return cell, wall, fin
+    return cell, wall, fin, rays
 
 
 def print_help():
@@ -739,19 +750,24 @@ if __name__ == "__main__":
         FOLDER_PATH = f'../run/{output_folder}'  # directory
 
         if FUNC == 0:
-            cell_vtks, wall_vtks, fin_vtks = get_vtks()
+            cell_vtks, wall_vtks, fin_vtks, ray_vtks = get_vtks()
             VTKS = load(cell_vtks)
             if WALLS and len(wall_vtks) > 0:
                 W_VTKS = load(wall_vtks)
             if FIN and len(fin_vtks) > 0:
                 F_VTKS = load(fin_vtks)
+            if RAYS and len(ray_vtks) > 0:
+                R_VTKS = load(ray_vtks)
             render_movie(walls=WALLS and len(wall_vtks) > 0,
                          fin=FIN and len(fin_vtks) > 0,
+                         ray=RAYS and len(ray_vtks) > 0,
                          cells=CELLS)
         elif FUNC == 1:
-            cell_vtks, wall_vtks, fin_vtks = get_vtks()
+            cell_vtks, wall_vtks, fin_vtks, ray_vtks = get_vtks()
             if FIN and len(fin_vtks) > 0:
                 F_VTKS = load(fin_vtks)
+            if RAYS and len(ray_vtks) > 0:
+                R_VTKS = load(ray_vtks)
             VTKS = load(cell_vtks)
             pattern_stats(fin=FIN)
         elif FUNC == 2:
