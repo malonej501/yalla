@@ -21,6 +21,9 @@ C_PROP = "cell_type"  # cell property to colourise
 FUNC = 0  # by default render movie
 ZOOM = 0.6  # define the how far the camera is out
 PT_SIZE = 12  # how large the cells are drawn
+PA = 0.7  # point alpha
+FA = 0.1  # fin alpha
+RA = 0.5  # ray alpha
 ANIMATE = 2  # 0 = False, 1 = Matplotlib, 2 = Vedo
 SHOW_AX = True  # show axes
 CELLS = True  # render cells if present
@@ -86,16 +89,17 @@ def render_movie(walls=False, fin=False, cells=True, rays=False):
         pts, wpts = Points([]), Points([])  # empty points object
         fmesh, rmesh = Mesh(), Mesh()  # empty mesh object
         if cells:
-            pts = Points(vtk).point_size(PT_SIZE * ZOOM)  # originally 10
+            pts = Points(vtk).alpha(PA).point_size(
+                PT_SIZE * ZOOM)  # originally 10
         if walls:
             wpts = Points(W_VTKS[i]).point_size(PT_SIZE * ZOOM).color("black")
         wnrms = Glyph(wpts, Arrow().scale(0.5), "normals", c="blue")
         if fin:
             fmesh = Mesh(F_VTKS[i]).alpha(
-                0.1).linecolor("black").color("grey")  # .wireframe()
+                FA).linecolor("black").color("grey")  # .wireframe()
         if rays:
             rmesh = Mesh(R_VTKS[i]).alpha(
-                0.1).linecolor("black").color("grey")  # .wireframe()
+                RA).linecolor("black").color("grey")  # .wireframe()
 
             # lims = ((pts.bounds()[0],pts.bounds()[1]),
             # (pts.bounds()[2],pts.bounds()[3]))
