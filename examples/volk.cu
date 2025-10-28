@@ -252,7 +252,7 @@ __global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X,
 
         d_old_v[n] = d_old_v[i];
         // d_cell_type[n] = -1;
-        d_cell_type[n] = (i < (d_pm.n_new_cells / 2)) ? -1 : -2;
+        d_cell_type[n] = (i < (d_pm.n_new_cells / 2)) ? -3 : -2;
         // Remove if outside mesh
         if (test_exclusion(wall_mesh, d_X[n])) {
             d_cell_type[n] = -99;  // Mark for removal
@@ -299,15 +299,15 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
 
     // if (d_cell_type[i] == 1 || d_cell_type[i] == 2) return;
 
-    if (d_cell_type[i] == -1 && d_in_slow[i] == true) {
+    if (d_cell_type[i] == -3 && d_in_slow[i] == true) {
         if (d_ngs_A[i] > d_pm.alpha * d_ngs_B[i] &&   // self-activation short
             d_ngs_Bd[i] > d_pm.beta * d_ngs_Ad[i] &&  // inhibition long
             d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.eta)     // overcrowding short
             d_cell_type[i] = 3;
     } else if (d_cell_type[i] == -2) {
-        if ((d_ngs_B[i] > d_pm.phi * d_ngs_A[i] &&  // self-activation short
-                d_ngs_Ad[i] > d_pm.psi * d_ngs_Bd[i] &&  // inhibition long
-                d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.kappa)  // overcrowding short
+        if (  //(d_ngs_B[i] > d_pm.phi * d_ngs_A[i] &&  // self-activation short
+              // d_ngs_Ad[i] > d_pm.psi * d_ngs_Bd[i] &&  // inhibition long
+            d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.kappa  // overcrowding short
             || (curand_uniform(&d_state[i]) < d_pm.B_div &&
                    d_ngs_A[i] + d_ngs_B[i] < 2))
             d_cell_type[i] = 2;
@@ -324,7 +324,7 @@ __global__ void death(
 
     // short-range competition spot cells
     // if spot and non-spot in nbhd exceed spot, die
-    if (d_cell_type[i] == 3 && d_ngs_B[i] > d_ngs_A[i]) d_cell_type[i] = -1;
+    if (d_cell_type[i] == 3 && d_ngs_B[i] > 4 * d_ngs_A[i]) d_cell_type[i] = -1;
 
     // short-range competition non-spot cells
     // if non-spot and no. spot in nbhd  exceeds no. non-spot, die
