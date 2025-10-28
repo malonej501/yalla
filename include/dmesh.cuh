@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -28,6 +29,11 @@ struct Triangle_d {
 struct Mesh_d {
     Triangle_d* d_facets;
     int n_facets;
+};
+
+struct Plane {
+    float3 point;
+    float3 normal;
 };
 
 __host__ __device__ bool intersect_ray_triangle(
@@ -257,6 +263,7 @@ public:
     float3 get_maximum();
     float3 get_minimum();
     float get_ap_len();
+    Plane get_3rd_ray_plane();
 };
 
 Fin::Fin(std::string file_name, std::string out_name = "NONE")
@@ -352,4 +359,70 @@ float Fin::get_ap_len()
         }
     }
     return max_x_at_y0;
+}
+
+Plane Fin::get_3rd_ray_plane()
+{
+    int idx = 5;  // index of the point to select from anterior to post
+    float3 upper;
+    float3 lower;
+    // Order vertices where y=0 by x value ascending, return 5th
+    std::set<float> upper_x_vals;
+    for (const auto& tri : h_facets) {
+        const float ys[3] = {tri.V0.y, tri.V1.y, tri.V2.y};
+        if (ys[0] == 0.0f && ys[1] == 0.0f && ys[2] == 0.0f) {  // at y=0
+            const float xs[3] = {tri.V0.x, tri.V1.x, tri.V2.x};
+            upper_x_vals.insert(xs[0]);
+            upper_x_vals.insert(xs[1]);
+            upper_x_vals.insert(xs[2]);
+        }
+    }
+    if (upper_x_vals.size() >= idx + 1) {
+        auto it = upper_x_vals.begin();
+        std::advance(it, idx);
+        upper = make_float3(*it, 0.0f, 0.0f);
+    }
+    // Order vertices where y!=0 by x value ascending, return 5th
+    std::vector<float3> lower_vals;
+    for (const auto& tri : h_facets) {
+        const float ys[3] = {tri.V0.y, tri.V1.y, tri.V2.y};
+        if (ys[0] != 0.0f && ys[1] != 0.0f && ys[2] != 0.0f) {
+            const float xs[3] = {tri.V0.x, tri.V1.x, tri.V2.x};
+            lower_vals.push_back(make_float3(xs[0], ys[0], 0.0f));
+            lower_vals.push_back(make_float3(xs[1], ys[1], 0.0f));
+            lower_vals.push_back(make_float3(xs[2], ys[2], 0.0f));
+        }
+    }
+    if (lower_vals.size() >= idx + 1) {
+        // sort by x ascending
+        std::sort(lower_vals.begin(), lower_vals.end(),
+            [](const float3& a, const float3& b) { return a.x < b.x; });
+        // remove near-duplicate x values (tolerance)
+        const float eps = 1e-6f;
+        auto last = std::unique(lower_vals.begin(), lower_vals.end(),
+            [eps](const float3& a, const float3& b) {
+                return fabsf(a.x - b.x) < eps;
+            });
+        lower_vals.erase(last, lower_vals.end());
+        if (lower_vals.size() >= idx + 1)
+            lower = make_float3(lower_vals[idx].x, lower_vals[idx].y, 0.0f);
+    }
+
+    // Calculate plane normal
+    float3 ray_dir = lower - upper;
+    float3 normal = cross_product(ray_dir, make_float3(0.0f, 0.0f, 1.0f));
+    normal /= sqrt(dot_product(normal, normal));
+    printf("3rd ray plane normal: %f,%f,%f\n", normal.x, normal.y, normal.z);
+    printf("upper pt: %f,%f,%f\n", upper.x, upper.y, upper.z);
+
+    return {upper, normal};
+}
+
+template<typename Pt>
+__host__ __device__ float signed_distance_to_plane(
+    const Pt d_X, const Plane& plane)
+{
+    float3 pt = make_float3(d_X.x, d_X.y, d_X.z);
+    float3 pt_to_plane_vec = pt - plane.point;
+    return dot_product(pt_to_plane_vec, plane.normal);
 }

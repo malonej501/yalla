@@ -337,14 +337,15 @@ __global__ void death(
     }
 }
 
-__global__ void cell_switching(int n_cells, Cell* d_X, const float* d_slow_reg)
+__global__ void cell_switching(
+    int n_cells, Cell* d_X, const float* d_slow_reg, Plane* d_ray_plane)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
 
     if (d_pm.tmode == 5) {  // switching for non/advecting spot cells
-        if (d_cell_type[i] == 1 && d_X[i].y < d_slow_reg[0] &&
-            d_X[i].y > d_slow_reg[1]) {  // restrict switching to slow region
+        if (d_cell_type[i] == 1 &&
+            d_in_slow[i]) {  // restrict switching to slow region
             d_cell_type[i] = 3;
         }
     }
@@ -372,13 +373,14 @@ void update_slow_reg(MeshType& tis, float slow_reg[2])
 }
 
 __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
-    const float* d_slow_reg, int time_step)
+    const float* d_slow_reg, Plane* d_ray_plane, int time_step)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
     // printf("slow_reg: %f, %f\n", (*slow_reg)[0], (*slow_reg)[1]);
 
-    if ((d_X[i].y < d_slow_reg[0]) && (d_X[i].y > d_slow_reg[1])) {
+    if ((d_X[i].y < d_slow_reg[0]) && (d_X[i].y > d_slow_reg[1]) &&
+        (signed_distance_to_plane(d_X[i], *d_ray_plane) < 0)) {
         d_in_slow[i] = true;  // mark cells as in slow region
     } else {
         d_in_slow[i] = false;
@@ -533,6 +535,14 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     float slow_reg[2] = {0, 0};  // initialise slow_reg with default values
     float* d_slow_reg;
     cudaMalloc(&d_slow_reg, 2 * sizeof(float));  // GPU mem alloc
+    Plane ray_plane;
+    Plane* d_ray_plane;
+    cudaMalloc(&d_ray_plane, sizeof(Plane));  // GPU mem alloc
+    Fin fin("../inits/fin_init.vtk",
+        "fin_" + std::to_string(walk_id) + "_" + std::to_string(step));
+    Fin fin_rays("../inits/ray_init.vtk",
+        "fin_rays_" + std::to_string(walk_id) + "_" + std::to_string(step));
+
 
     if (h_pm.tmode == 0) {
         random_disk_z(h_pm.init_dist, cells);
@@ -586,6 +596,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         update_slow_reg(tis, slow_reg);
         cudaMemcpy(
             d_slow_reg, slow_reg, 2 * sizeof(float), cudaMemcpyHostToDevice);
+        ray_plane = fin_rays.get_3rd_ray_plane();
+        cudaMemcpy(
+            d_ray_plane, &ray_plane, sizeof(Plane), cudaMemcpyHostToDevice);
     }
     if (h_pm.tmode == 4) {  // cut the fin mesh out of a random cloud of cells
         Mesh tis{"../inits/fin_init.vtk"};
@@ -611,6 +624,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         update_slow_reg(tis, slow_reg);
         cudaMemcpy(
             d_slow_reg, slow_reg, 2 * sizeof(float), cudaMemcpyHostToDevice);
+        ray_plane = fin_rays.get_3rd_ray_plane();
+        cudaMemcpy(
+            d_ray_plane, &ray_plane, sizeof(Plane), cudaMemcpyHostToDevice);
     }
     if (h_pm.tmode == 5) {  // fin with spot aggregation at top
         Mesh tis{"../inits/fin_init.vtk"};
@@ -637,6 +653,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         update_slow_reg(tis, slow_reg);
         cudaMemcpy(
             d_slow_reg, slow_reg, 2 * sizeof(float), cudaMemcpyHostToDevice);
+        ray_plane = fin_rays.get_3rd_ray_plane();
+        cudaMemcpy(
+            d_ray_plane, &ray_plane, sizeof(Plane), cudaMemcpyHostToDevice);
     }
 
 
@@ -665,12 +684,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         ngs_Ad.h_prop[i] = 0;
         ngs_Bd.h_prop[i] = 0;
     }
-
-    Fin fin("../inits/fin_init.vtk",
-        "fin_" + std::to_string(walk_id) + "_" + std::to_string(step));
-    Fin fin_rays("../inits/ray_init.vtk",
-        "fin_rays_" + std::to_string(walk_id) + "_" + std::to_string(step));
-
 
     int time_step;  // declare  outside main loop for access in gen_func
     auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
@@ -706,7 +719,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         // return wall_forces<Cell, boundary_force>(n, d_X, d_dX, 0);
         if (h_pm.adv_switch)
             advection<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                cells.get_d_n(), d_X, d_dX, d_slow_reg, time_step);
+                cells.get_d_n(), d_X, d_dX, d_slow_reg, d_ray_plane, time_step);
         if (h_pm.fin_walls)
             wall_forces_new<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                 cells.get_d_n(), d_X, d_dX, fin.mesh);
@@ -785,6 +798,9 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
                 cudaMemcpyHostToDevice);  // copy to device
             fin_rays.grow(h_pm.t_growth_rate * 0.2 * 10);
+            ray_plane = fin_rays.get_3rd_ray_plane();
+            cudaMemcpy(d_ray_plane, &ray_plane, sizeof(Plane),
+                cudaMemcpyHostToDevice);  // copy to device
         }
         for (float T = 0.0; T < 1.0; T += h_pm.dt) {
             // printf("T = %f\n", T);
@@ -805,8 +821,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             }
             if (h_pm.type_switch)
                 cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X,
-                    d_slow_reg);    // switch cell types if
+                    cells.get_d_n(), cells.d_X, d_slow_reg,
+                    d_ray_plane);   // switch cell types if
                                     // conditions are met
             if (h_pm.death_switch)  // death occurs once per day - 20 days total
                                     // if (time_step % int(h_pm.cont_time / 20)
