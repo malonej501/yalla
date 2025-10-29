@@ -24,6 +24,10 @@ FUNC = 0
 WD = "../run/saves/"
 NSHOW = 0  # no. fins to show in real fin comparison
 EXPORT = False
+SHARE_AXES = False  # share axes in time series plots
+CPROP = 0  # cell property to color by in vedo renderings
+# 0: mech_str, 1: cell_type, 2: in_slow, 3: ngs_A, 4: ngs_B,
+# 5: ngs_Ac, 6: ngs_Bc, 7: ngs_Ad, 8: ngs_Bd
 
 
 class Frame():
@@ -34,8 +38,11 @@ class Frame():
         self.wid = wid  # walk identifier
         self.step = step  # step number
         self.frame = frame  # frame number
-        self.mesh = load(f"../run/{run_id}/out_{wid}_{step}_{frame}.vtk")
+        self.pt_mesh = load(f"../run/{run_id}/out_{wid}_{step}_{frame}.vtk")
         print(f"../run/{run_id}/out_{wid}_{step}_{frame}.vtk")
+        self.fin_mesh = load(f"../run/{run_id}/fin_{wid}_{step}_{frame}.vtk")
+        self.ray_mesh = load(
+            f"../run/{run_id}/fin_rays_{wid}_{step}_{frame}.vtk")
 
     def phenotype(self, eps=0.05):
         """Returns the phenotype of the frame.
@@ -53,8 +60,8 @@ class Frame():
             "std_spot_roundness": np.nan
         }
         # return positions of spot cells - both mobile and static
-        x_spots = self.mesh.vertices[
-            np.isin(self.mesh.pointdata["cell_type"], [1, 3])
+        x_spots = self.pt_mesh.vertices[
+            np.isin(self.pt_mesh.pointdata["cell_type"], [1, 3])
         ]
         if x_spots.size == 0:  # skip if there no spot cells present in vtk
             return stats
@@ -116,7 +123,7 @@ class Frame():
         display = Display(visible=0, size=(1366, 768))
         display.start()
         cmap = "viridis"
-        points = Points(self.mesh).point_size(
+        points = Points(self.pt_mesh).point_size(
             pt__size * zoom).cmap(cmap, c_prop)
         p = show(points, interactive=False)
         p.screenshot(
@@ -207,7 +214,7 @@ class Realfin():
 
         stats_full = pd.DataFrame(stats_full)
 
-        mesh_stats, _, _ = self.mesh()
+        mesh_stats, _, _ = self.pt_mesh()
         return {
             "id": self.id,
             "n_regions": stats_full["n_regions"].iloc[0],
@@ -584,32 +591,29 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
     # frames = np.linspace(10, 70, n_frames, dtype=int)  # for wall-penetrating
     print(frames)
     ctypes = {1: "Spot-migratory", 2: "Non-spot", 3: "Spot-static"}
+    props = ["mech_str", "cell_type", "in_slow", "ngs_A", "ngs_B",
+             "ngs_Ac", "ngs_Bc", "ngs_Ad", "ngs_Bd"]
 
     if nrow == 1:
         fig, axs = plt.subplots(1, 6, figsize=(10, 1.5),
-                                layout="constrained", sharex=True, sharey=True)
+                                sharex=SHARE_AXES, sharey=SHARE_AXES,
+                                layout="constrained")
     else:
         fig, axs = plt.subplots(2, 3, figsize=(6, 3),
-                                layout="constrained", sharex=True, sharey=True)
+                                sharex=SHARE_AXES, sharey=SHARE_AXES,
+                                layout="constrained")
     axs = axs.flatten()
 
     handles, labels = [], []
     for i, fr in enumerate(frames):
         frame = Frame(run_id=run_id, wid=0, step=0, frame=fr)
-        fr_dat = {"x": frame.mesh.vertices[:, 0],
-                  "y": frame.mesh.vertices[:, 1],
-                  "type": frame.mesh.pointdata["cell_type"]}
-        fr_dat = pd.DataFrame(fr_dat)
-        for ctype in fr_dat["type"].unique():
-            mask = fr_dat["type"] == ctype
-            sc = axs[i].scatter(fr_dat["x"][mask], fr_dat["y"][mask], s=1,
-                                label=ctypes[ctype], c=plt.cm.viridis(
-                (ctype - cell_types.min()) /
-                (cell_types.max() - cell_types.min())),
-                rasterized=True)  # rasterize for large data
-            if ctypes[ctype] not in labels:
-                handles.append(sc)
-                labels.append(ctypes[ctype])
+        pts = {"x": frame.pt_mesh.vertices[:, 0],
+               "y": frame.pt_mesh.vertices[:, 1],
+               "prop": frame.pt_mesh.pointdata[props[CPROP]]}
+        pts = pd.DataFrame(pts)
+        sc = axs[i].scatter(pts["x"], pts["y"], s=1, alpha=0.7,
+                            c=pts["prop"], cmap="viridis",
+                            rasterized=True)  # rasterize for large data
         if sb:  # scale bar 1mm
             x0, x1 = axs[i].get_xlim()
             y0, y1 = axs[i].get_ylim()
@@ -622,14 +626,20 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
         axs[i].set_xticks([])
         axs[i].set_yticks([])
         axs[i].axis("off")
+    if CPROP == 1:  # add legend only for cell type plots
+        leg = fig.legend(handles, labels,
+                         loc="outside lower center",
+                         title="Cell Type", ncol=3)
+        for handle in leg.legend_handles:
+            handle.set_sizes([30])
+            handle.set_edgecolor("black")
+            handle.set_linewidth(0.5)
+    else:
+        cbar = fig.colorbar(
+            sc, ax=axs, location="bottom", orientation="horizontal",
+            fraction=0.05, pad=0.05)
+        cbar.set_label(props[CPROP])
 
-    leg = fig.legend(handles, labels,
-                     loc="outside lower center",
-                     title="Cell Type", ncol=3)
-    for handle in leg.legend_handles:
-        handle.set_sizes([30])
-        handle.set_edgecolor("black")
-        handle.set_linewidth(0.5)
     # print(axs[4].get_legend_handles_labels())
 
     plt.savefig(f"{os.path.basename(run_id)}_tseries_mtpl.pdf")
