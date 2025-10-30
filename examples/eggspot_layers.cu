@@ -35,6 +35,7 @@
 // define global variables for the GPU
 __device__ float* d_mech_str;
 __device__ int* d_cell_type;  // cell_type: A=1-Iri/Mel/Xan_d, B=2-Xan_l, DEAD=0
+// 1=Id, 2=Xd,
 __device__ float3* d_W;  // random number from Weiner process for stochasticity
 __device__ bool* d_in_slow;   // whether a cell is in a slow region
 __device__ Pm d_pm;           // simulation parameters (host h_pm)
@@ -161,33 +162,6 @@ __global__ void stage_new_cells(int n_cells, curandState* d_state, float3* d_X,
         // Remove if outside mesh
         if (test_exclusion(wall_mesh, d_X[n])) {
             d_cell_type[n] = -99;  // Mark for removal
-        }
-    }
-}
-
-__global__ void clean_up(int n_cells, float3* d_X, int* d_n_cells)
-{
-    // Remove cells that are marked for death by swapping with last cell.
-    // N.B. if n-1 is also dead, a dead cell will remain until the next call,
-    // thus this function is called repeatedly until no dead cells remain.
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n_cells) return;
-
-    if (d_cell_type[i] < 0) {             // if the cell is marked for removal
-        int n = atomicSub(d_n_cells, 1);  // decrement d_n_cells
-        if (i < n) {
-            d_X[i] = d_X[n - 1];  // copy properties of last cell to cell i
-            d_W[i] = d_W[n - 1];
-            d_cell_type[i] = d_cell_type[n - 1];
-            d_mech_str[i] = d_mech_str[n - 1];
-            // d_old_v[i] = d_old_v[n - 1];
-            d_in_slow[i] = d_in_slow[n - 1];
-            d_ngs_A[i] = d_ngs_A[n - 1];
-            d_ngs_B[i] = d_ngs_B[n - 1];
-            d_ngs_Ac[i] = d_ngs_Ac[n - 1];
-            d_ngs_Bc[i] = d_ngs_Bc[n - 1];
-            d_ngs_Ad[i] = d_ngs_Ad[n - 1];
-            d_ngs_Bd[i] = d_ngs_Bd[n - 1];
         }
     }
 }
