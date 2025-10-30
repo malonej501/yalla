@@ -30,12 +30,12 @@
 // diffusible chemicals
 // MAKE_PT(Cell); // float3 i .x .y .z .u .v .whatever
 // to use MAKE_PT(Cell) replace every instance of float3 with Cell
-MAKE_PT(Cell, u, v);
+// MAKE_PT(Cell);
 
 // define global variables for the GPU
 __device__ float* d_mech_str;
 __device__ int* d_cell_type;  // cell_type: A=1-Iri/Mel/Xan_d, B=2-Xan_l, DEAD=0
-__device__ Cell* d_W;  // random number from Weiner process for stochasticity
+__device__ float3* d_W;  // random number from Weiner process for stochasticity
 __device__ bool* d_in_slow;   // whether a cell is in a slow region
 __device__ Pm d_pm;           // simulation parameters (host h_pm)
 __device__ float3 d_tis_min;  // min coordinate of tissue mesh
@@ -84,93 +84,10 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     if (i == j) {      // if the cell is interacting with itself
         dF += d_W[i];  // add stochasticity from the weiner process to the
                        // attributes of the cells
-
-        // Chemical production and degredation
-        if (d_pm.chem_switch) {
-            if (d_pm.cmode == 0) {  // chemical production and degredation
-                dF.u = d_pm.k_prod * (1.0 - Xi.u) *
-                       (d_cell_type[i] == 1 ||
-                           d_cell_type[i] == 3);  // cell type 1/3 produce u
-                dF.v =
-                    d_pm.k_prod * (1.0 - Xi.v) *
-                    (d_cell_type[i] == 2);  // cell type 2 produces chemical v
-                // dF.u = d_pm.k_prod * ((d_cell_type[i] == 1 || d_cell_type[i]
-                // == 3) &
-                //                          Xi.u < 1);  // stop making u when it
-                //                                      //   reaches 1
-                // dF.v = d_pm.k_prod *
-                //        ((d_cell_type[i] == 2) & Xi.v < 1);  // stop making v
-                //        when
-                // it reaches 1
-                dF.u -= d_pm.k_deg * (Xi.u);
-                dF.v -= d_pm.k_deg * (Xi.v);
-            }
-
-            if (d_pm.cmode == 1) {
-                // see Schnackenberg 1979 eq. 41
-                float a = ((Xi.x + 3) * 0.1);
-                float b = ((Xi.y + 1) * 0.2);
-                // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + d_pm.a_u;
-                // dF.v = -(Xi.u * Xi.u * Xi.v) + d_pm.b_v;
-                dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + a;
-                dF.v = b - (Xi.u * Xi.u * Xi.v);
-                // dF.u = (Xi.u * Xi.u * Xi.v) - Xi.u + (Xi.x * 0.1);
-                // dF.v = -(Xi.u * Xi.u * Xi.v) + (Xi.y * 0.1);
-            }
-            if (d_pm.cmode == 2) {
-                // Gray Scott model
-                float a = 0.3;
-                float b = 0.003;
-                float R = 0.1;
-                // float a = ((Xi.x + 3) * 0.1);
-                // float b = ((Xi.y + 1) * 0.01);
-                // float R = ((Xi.x + 3) * 0.1);
-                dF.u = R * ((Xi.u * Xi.u * Xi.v) - ((a + b) * Xi.u));
-                dF.v = R * (-(Xi.u * Xi.u * Xi.v) + (a * (1 - Xi.v)));
-            }
-            if (d_pm.cmode == 3) {
-                // Gierer Meinhardt model
-                // float a = 0.8;
-                // float b = 1;
-                // float c = 6;
-                // float a = ((Xi.x + 3) * 0.1);
-                // float b = ((Xi.y + 1) * 0.1);
-                // float c = ((Xi.y + 1) * 0.1);
-                // dF.u = (a + ((Xi.u * Xi.u) / Xi.v) - (b * Xi.u));
-                // dF.v = (Xi.u * Xi.u) - (c * Xi.v);
-                const auto lambda = 1;
-                const auto f_v = 0.1;
-                const auto f_u = 10.0;
-                const auto g_u = 5.0;
-                const auto m_u = 0.02;
-                const auto m_v = 0.05;
-                const auto s_u = 0.005;
-                dF.u = lambda * ((f_u * Xi.u * Xi.u) / (1 + f_v * Xi.v) -
-                                    m_u * Xi.u + s_u);
-                dF.v = lambda * (g_u * Xi.u * Xi.u - m_v * Xi.v);
-            }
-        }
         return dF;
     }
 
-    // Diffusion
-    if (d_pm.chem_switch) {
-        dF.u = -d_pm.D_u * r.u;  // r = Xi - Xj solvers.cuh line 448
-        dF.v = -d_pm.D_v * r.v;
-    }
-    // dF.u = -((Xi.x + 3) * 0.01) * r.u;
-    // dF.v = -((Xi.y + 1.5) * 0.01) * r.v;
-    // dF.u = -0.1 * r.u;
-    // dF.v = -4 * r.v;
-    // dF.u = -Xi.x * r.u * 0.01;
-    // dF.v = -Xi.y * r.v * 0.01;
-    // dF.u = -1 * r.u;
-    // dF.v = -40 * r.v;
-    // dF.u = -0.01 * r.u;
-    // dF.v = -0.05 * r.v;
-
     // Mechanical forces
-
     if (!d_pm.mov_switch)
         return dF;  // if cell movement is off, return no forces
 
@@ -186,16 +103,6 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         }
     }
 
-
-    // float F = (k_rep * fmaxf(0.08 - dist, 0) - k_adh * fmaxf(dist - 0.08,
-    // 0)); // forces are also dependent on adhesion and repulsion between cell
-    // types float F = (Adh * r.x * exp(-sqrt(r.x^2 + r.y^2) / adh)) / (adh *
-    // sqrt(r.x^2 + r.y^2)) - (Rep * r.x * exp(-sqrt(r.x^2 - r.y^2) / rep) /
-    // (rep * sqrt(r.x^2 - r.y^2))); Volkening et al. 2015 force potential,
-    // function in terms of distance in n dimensions
-    // float term1 = Adh / adh * expf(-dist / adh);
-    // float term2 = Rep / rep * expf(-dist / rep);
-    // float F = term1 - term2;
 
     // Volkening 2018
     float F = -Rep * (0.5f + 0.5f * tanhf((rep - dist) * 100));
@@ -226,12 +133,10 @@ __global__ void generate_noise(int n, curandState* d_state)
     d_W[i].y =
         curand_normal(&d_state[i]) * powf(d_pm.dt, 0.5) * d_pm.noise / d_pm.dt;
     d_W[i].z = 0;
-    d_W[i].u = 0;
-    d_W[i].v = 0;
 }
 
 
-__global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X,
+__global__ void stage_new_cells(int n_cells, curandState* d_state, float3* d_X,
     float3* d_old_v, int* d_n_cells, Mesh_d wall_mesh)
 {
     int i = blockIdx.x * blockDim.x +
@@ -260,7 +165,7 @@ __global__ void stage_new_cells(int n_cells, curandState* d_state, Cell* d_X,
     }
 }
 
-__global__ void clean_up(int n_cells, Cell* d_X, int* d_n_cells)
+__global__ void clean_up(int n_cells, float3* d_X, int* d_n_cells)
 {
     // Remove cells that are marked for death by swapping with last cell.
     // N.B. if n-1 is also dead, a dead cell will remain until the next call,
@@ -287,7 +192,7 @@ __global__ void clean_up(int n_cells, Cell* d_X, int* d_n_cells)
     }
 }
 
-__global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
+__global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
     float3* d_old_v, int* d_n_cells, Mesh_d wall_mesh)
 {
     // change cells from staging to active types if conditions are met
@@ -315,7 +220,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, Cell* d_X,
 }
 
 __global__ void death(
-    int n_cells, curandState* d_state, Cell* d_X, int* d_n_cells)
+    int n_cells, curandState* d_state, float3* d_X, int* d_n_cells)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
@@ -338,7 +243,7 @@ __global__ void death(
 }
 
 __global__ void cell_switching(
-    int n_cells, Cell* d_X, const float* d_slow_reg, Plane* d_ray_plane)
+    int n_cells, float3* d_X, const float* d_slow_reg, Plane* d_ray_plane)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
@@ -372,7 +277,7 @@ void update_slow_reg(MeshType& tis, float slow_reg[2])
     std::cout << "slow region y: " << p1 << " to " << p2 << "\n";
 }
 
-__global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
+__global__ void advection(int n_cells, const float3* d_X, float3* d_dX,
     const float* d_slow_reg, Plane* d_ray_plane, int time_step)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -404,7 +309,7 @@ __global__ void advection(int n_cells, const Cell* d_X, Cell* d_dX,
 }
 
 __global__ void wall_forces_new(
-    int n_cells, const Cell* d_X, Cell* d_dX, Mesh_d wall_mesh)
+    int n_cells, const float3* d_X, float3* d_dX, Mesh_d wall_mesh)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
@@ -462,7 +367,7 @@ struct is_dead {
     }
 };
 
-void compact_cells_with_remove_if(int n_cells, Cell* d_X, Cell* d_W,
+void compact_cells_with_remove_if(int n_cells, float3* d_X, float3* d_W,
     int* d_cell_type, float* d_mech_str, bool* d_in_slow, int* d_ngs_A,
     int* d_ngs_B, int* d_ngs_Ac, int* d_ngs_Bc, int* d_ngs_Ad, int* d_ngs_Bd,
     int* d_n_cells)
@@ -503,7 +408,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     /* create host variables*/
     // you first create an instance of the Property class on the host, then
     // you connect it to the global variable defined on the device with
-    Property<Cell> W{
+    Property<float3> W{
         h_pm.n_max, "wiener_process"};  // weiner process random number
     cudaMemcpyToSymbol(d_W, &W.d_prop, sizeof(d_W));
     Property<float> mech_str{h_pm.n_max, "mech_str"};
@@ -530,7 +435,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     // Initial conditions
     // Solution<Cell, Gabriel_solver> cells{h_pm.n_max, h_pm.g_size,
     // h_pm.r_max};
-    Solution<Cell, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.c_size};
+    Solution<float3, Grid_solver> cells{h_pm.n_max, h_pm.g_size, h_pm.c_size};
     // args are n_max, grid_size, cube_size
     float slow_reg[2] = {0, 0};  // initialise slow_reg with default values
     float* d_slow_reg;
@@ -586,7 +491,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             h_pm.init_dist, tis.get_minimum(), tis.get_maximum(), cells);
         auto new_n =
             thrust::remove_if(thrust::host, cells.h_X, cells.h_X + *cells.h_n,
-                [&tis](Cell x) { return tis.test_exclusion(x); });
+                [&tis](float3 x) { return tis.test_exclusion(x); });
         *cells.h_n = std::distance(cells.h_X, new_n);
         for (int i = 0; i < h_pm.n_0; i++) {  // set cell types
             cell_type.h_prop[i] = (std::rand() % 100 < h_pm.A_init)
@@ -612,7 +517,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             h_pm.init_dist, tis.get_minimum(), tis.get_maximum(), cells);
         auto new_n =
             thrust::remove_if(thrust::host, cells.h_X, cells.h_X + *cells.h_n,
-                [&tis](Cell x) { return tis.test_exclusion(x); });
+                [&tis](float3 x) { return tis.test_exclusion(x); });
         *cells.h_n = std::distance(cells.h_X, new_n);
         for (int i = 0; i < h_pm.n_0; i++) {  // set cell types
             // spot cells appear in leftmost 10% of tissue
@@ -641,7 +546,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             h_pm.init_dist, tis.get_minimum(), tis.get_maximum(), cells);
         auto new_n =
             thrust::remove_if(thrust::host, cells.h_X, cells.h_X + *cells.h_n,
-                [&tis](Cell x) { return tis.test_exclusion(x); });
+                [&tis](float3 x) { return tis.test_exclusion(x); });
         *cells.h_n = std::distance(cells.h_X, new_n);
         for (int i = 0; i < h_pm.n_0; i++) {  // set cell types
             // spot cells appear in topmost 15% of tissue
@@ -658,23 +563,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             d_ray_plane, &ray_plane, sizeof(Plane), cudaMemcpyHostToDevice);
     }
 
-
-    for (int i = 0; i < h_pm.n_0; i++) {  // initialise chemical amounts
-        // cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
-        // cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
-        cells.h_X[i].u = 0;
-        cells.h_X[i].v = 0;
-        // Mesh tis{"../inits/shape1_mesh_3D.vtk"};
-        // tis.rescale(h_pm.tis_s);
-        // auto y_len = tis.get_maximum().y - tis.get_minimum().y;
-        // if (cells.h_X[i].y > tis.get_maximum().y - (y_len * 0.1)) {
-        //     cells.h_X[i].u = (std::rand()) / (RAND_MAX + 1.);
-        //     cells.h_X[i].v = (std::rand()) / (RAND_MAX + 1.);
-        // }
-    }
-
     // Initialise properties and k with zeroes
-    for (int i = 0; i < h_pm.n_max; i++) {  // initialise with zeroes
+    for (int i = 0; i < h_pm.n_max; i++) {
         mech_str.h_prop[i] = 0;
         in_slow.h_prop[i] = false;
         ngs_A.h_prop[i] = 0;
@@ -686,16 +576,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     }
 
     int time_step;  // declare  outside main loop for access in gen_func
-    auto generic_function = [&](const int n, const Cell* __restrict__ d_X,
-                                Cell* d_dX) {  // then set the mechanical
-        // forces to zero on the device
-        // remove cells marked for death
-        // auto new_end = thrust::remove_if(thrust::device,
-        // cell_type.d_prop,
-        //     cell_type.d_prop + n_cells,
-        //     [] __device__(int type) { return type == -1 || type == -2;
-        //     });
-        // n_cells = new_end - d_X;
+    auto generic_function = [&](const int n, const float3* __restrict__ d_X,
+                                float3* d_dX) {
         // Set these properties to zero after every timestep so they
         // don't accumulate Called every timesetep, allows you to add
         // custom forces at every timestep e.g. advection
@@ -738,20 +620,8 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 
     Vtk_output output{
         "out_" + std::to_string(walk_id) + "_" + std::to_string(step)};
-    // create instance of Vtk_output class
 
-
-    /* the neighbours are initialised with 0. However, you want to use them
-       in the proliferation function, which is called first.
-        1. proliferation
-        2. noise
-        3. take_step
-       we use a trick, such that the very first call of the proliferation is
-       not launched on zeros. here instead of dt we pass 0.0, so that we
-       count cells, but do not compute any replacements in the tissue
-       -> x[t+1] = x[t] + 0.0 * (dx);
-    */
-
+    // initialise properties by taking a zero dt step
     cells.take_step<pairwise_force>(0.0, generic_function);
 
     // write out initial condition
@@ -770,8 +640,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     output.write_property(mech_str);
     output.write_property(cell_type);
     output.write_property(in_slow);
-    // output.write_field(cells, "u", &Cell::u);  // write u of each cell to
-    // vtk output.write_field(cells, "v", &Cell::v);
     output.write_property(ngs_A);
     output.write_property(ngs_B);
     output.write_property(ngs_Ac);
@@ -856,8 +724,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             output.write_property(mech_str);
             output.write_property(cell_type);
             output.write_property(in_slow);
-            // output.write_field(cells, "u", &Cell::u);
-            // output.write_field(cells, "v", &Cell::v);
             output.write_property(ngs_A);
             output.write_property(ngs_B);
             output.write_property(ngs_Ac);
