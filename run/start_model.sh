@@ -41,8 +41,10 @@ module load cuda
 source ../venv/bin/activate
 if [[ "$version" -eq "0" ]]; then
     python3 ../sample/pwriter.py
-else
+elif [[ "$version" -eq "1" ]]; then
     python3 ../sample/pwriter.py -p volk_params.csv
+elif [[ "$version" -eq "2" ]]; then
+    python3 ../sample/pwriter.py -p eggspot_layers_params.csv
 fi
 deactivate
 
@@ -51,8 +53,10 @@ echo "Compiling..."
 # nvcc -std=c++14 -arch=sm_61 ../examples/eggspot.cu -o exec
 if [[ "$version" -eq "0" ]]; then
     /usr/local/cuda/bin/nvcc -std=c++17 -arch=sm_61 ../examples/eggspot.cu -o exec
-else
+elif [[ "$version" -eq "1" ]]; then
     /usr/local/cuda/bin/nvcc -std=c++17 -arch=sm_61 ../examples/volk.cu -o exec
+elif [[ "$version" -eq "2" ]]; then
+    /usr/local/cuda/bin/nvcc -std=c++17 -arch=sm_61 ../examples/eggspot_layers.cu -o exec
 fi
 echo "Compilation time: $SECONDS seconds"
 
@@ -81,7 +85,10 @@ mv exec-$job_id.out output/exec-$job_id.out
 if [[ "$version" -eq "0" ]]; then
     cp ../examples/eggspot.cu output/eggspot.cu # copy source code into output directory
     cp ../params/default.csv output/default.csv # copy params.h into output directory
-else
+elif [[ "$version" -eq "1" ]]; then
     cp ../examples/volk.cu output/volk.cu
-    cp ../params/volk_params.csv output/volk_params.csv 
+    cp ../params/volk_params.csv output/volk_params.csv
+elif [[ "$version" -eq "2" ]]; then
+    cp ../examples/eggspot_layers.cu output/eggspot_layers.cu
+    cp ../params/eggspot_layers_params.csv output/eggspot_layers_params.csv
 fi
