@@ -25,7 +25,7 @@ WD = "../run/saves/"
 NSHOW = 0  # no. fins to show in real fin comparison
 EXPORT = False
 SHARE_AXES = False  # share axes in time series plots
-CPROP = 0  # cell property to color by in vedo renderings
+CPROP = 1  # cell property to color by in vedo renderings
 # 0: mech_str, 1: cell_type, 2: in_slow, 3: ngs_A, 4: ngs_B,
 # 5: ngs_Ac, 6: ngs_Bc, 7: ngs_Ad, 8: ngs_Bd
 
@@ -214,7 +214,7 @@ class Realfin():
 
         stats_full = pd.DataFrame(stats_full)
 
-        mesh_stats, _, _ = self.pt_mesh()
+        mesh_stats, _, _ = self.mesh()
         return {
             "id": self.id,
             "n_regions": stats_full["n_regions"].iloc[0],
@@ -254,8 +254,8 @@ class Realfin():
 
         for r in self.regions_sig:  # plot spot major/minor axes
             y0, x0 = r.centroid
-            ax.text(x0, y0 - (self.arr.shape[1]*0.08), str(r.label),
-                    fontsize=10, ha='center', va='center')
+            # ax.text(x0, y0 - (self.arr.shape[1]*0.08), str(r.label),
+            #         fontsize=10, ha='center', va='center')
 
             orientation = r.orientation
             x1 = x0 + math.cos(orientation) * 0.5 * r.axis_minor_length
@@ -265,6 +265,10 @@ class Realfin():
 
             ax.plot((x0, x1), (y0, y1), color="black")
             ax.plot((x0, x2), (y0, y2), color="black")
+            print(r.major_axis_length)
+            print(r.major_axis_length / self.sb_len)
+            ax.text(x2, y2, f"{r.major_axis_length / self.sb_len:.2f} mm",
+                    fontsize=8, ha='left', va='bottom', color="black")
 
         ax.set_title(f"{self.id}")
         if export:
@@ -541,6 +545,7 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
                 break
     if export:
         plt.savefig(f"real_seg_comp_{n}_{mode}.pdf", dpi=300)
+        print(f"Saved real_seg_comp_{n}_{mode}.pdf")
 
     # plt.show()
 
@@ -604,7 +609,7 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
                                 layout="constrained")
     axs = axs.flatten()
 
-    handles, labels = [], []
+    handles = []
     for i, fr in enumerate(frames):
         frame = Frame(run_id=run_id, wid=0, step=0, frame=fr)
         pts = {"x": frame.pt_mesh.vertices[:, 0],
@@ -614,6 +619,7 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
         sc = axs[i].scatter(pts["x"], pts["y"], s=1, alpha=0.7,
                             c=pts["prop"], cmap="viridis",
                             rasterized=True)  # rasterize for large data
+
         if sb:  # scale bar 1mm
             x0, x1 = axs[i].get_xlim()
             y0, y1 = axs[i].get_ylim()
@@ -622,12 +628,12 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
             axs[i].plot([bar_x, bar_x + 1], [bar_y, bar_y],
                         color="black", lw=2)
         axs[i].set_aspect("equal")
-        axs[i].set_title(fr"$t={fr*10}$")
+        axs[i].set_title(f"Day {fr*2}")
         axs[i].set_xticks([])
         axs[i].set_yticks([])
         axs[i].axis("off")
     if CPROP == 1:  # add legend only for cell type plots
-        leg = fig.legend(handles, labels,
+        leg = fig.legend(handles, cell_types,
                          loc="outside lower center",
                          title="Cell Type", ncol=3)
         for handle in leg.legend_handles:
