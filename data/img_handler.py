@@ -15,9 +15,10 @@ matplotlib.use("pgf")
 plt.style.use("../misc/stylesheet.mplstyle")
 
 
-START_FROM = 171  # index of image to start from when landmarking
+START_FROM = 0  # index of image to start from when landmarking
 WD = None  # working directory for analysis
 FUNC = 0
+RESCALE = False
 
 
 def load_imgs_from_directory(dir_path):
@@ -162,14 +163,15 @@ class Landmarker:
             self.current_type = "s"
             h, w = img.shape[:2]
             scale = min(max_width / w, max_height / h, 1.0)
-            if scale < 1.0:
+            if RESCALE and scale < 1.0:
                 img_blank = cv2.resize(img_blank, (int(w * scale), int(h * scale)),
                                        interpolation=cv2.INTER_AREA)
                 img = cv2.resize(img, (int(w * scale), int(h * scale)),
                                  interpolation=cv2.INTER_AREA)
             self.current_img = img
             cv2.namedWindow(img_path)
-            cv2.resizeWindow(img_path, max_width, max_height)
+            if RESCALE:
+                cv2.resizeWindow(img_path, max_width, max_height)
             cv2.setMouseCallback(img_path, self.mouse_callback)
             print(f"Displaying: {img_path}")
             print("Press 'f' for fin landmark (red), 'e' for edge landmark (green)," +
@@ -878,10 +880,10 @@ def ray_len_over_time(path):
         ax.plot(pred, color='black',
                 linestyle='--', label='Linear regression')
 
-        text = (f"N={len(ray_i_lens['id'].unique())}" + "\n" +
+        text = (f"N={len(ray_i_lens['id'].unique())}\n" +
                 f"Slope={model.params['days']:.3f} mm/day")
-        ax.text(0.95, 0.05, text, transform=ax.transAxes,
-                ha="right", fontsize=6)
+        ax.text(0.05, 0.95, text, transform=ax.transAxes,
+                ha="left", va="top", fontsize=6)
         ax.grid(alpha=0.3)
         ax.set_title(f"Ray {ray_idx}", fontsize=8)
 
@@ -892,7 +894,8 @@ def ray_len_over_time(path):
     fig.legend(handles=handles, labels=labels,
                title="Fish ID", fontsize=6, ncol=1, loc='outside right')
 
-    plt.savefig("ray_len_over_time.pdf", bbox_inches='tight')
+    plt.savefig("ray_len_over_time.svg", bbox_inches='tight')
+    print("Saved ray length over time plot to ray_len_over_time.svg")
     plt.show()
 
     reg_slopes = pd.concat(reg_slopes)
@@ -904,11 +907,38 @@ def ray_len_over_time(path):
                 yerr=[reg_slopes["slope"] - reg_slopes["ci_lower"],
                       reg_slopes["ci_upper"] - reg_slopes["slope"]],
                 fmt='o', capsize=3)
-    ax.set_title("Fin ray growth rates\nmixed effects model with 95% CI")
+    ax.set_title("Fin ray growth rates\nLMM with 95\\% CI")
     ax.grid(alpha=0.3)
     ax.set_xlabel("Ray index (from anterior to posterior)")
     ax.set_ylabel("Growth rate (mm/day)")
-    plt.savefig("ray_growth_rates.pdf", bbox_inches='tight')
+    plt.savefig("ray_growth_rates.svg", bbox_inches='tight')
+    print("Saved ray growth rates plot to ray_growth_rates.svg")
+    plt.show()
+
+    # Plot ray growth rates against ray lengths at given timepoint
+    fig, ax = plt.subplots()
+
+    avg_ray_lens = ray_lens.groupby(["ray_idx", "days"])["ray_len_mm"].agg(
+        avg_ray_len_mm=("mean"),
+    ).reset_index()
+    avg_ray_lens = pd.merge(
+        avg_ray_lens, reg_slopes,
+        left_on="ray_idx", right_on="ray"
+    )
+
+    for day in avg_ray_lens["days"].unique():
+        pdat = avg_ray_lens[avg_ray_lens["days"] == day]
+        print(f"Day {day}")
+        sc = ax.scatter(pdat["avg_ray_len_mm"], pdat["slope"], c=pdat["days"],
+                        label=f"Day {day}", cmap="viridis", vmin=0,
+                        vmax=avg_ray_lens["days"].max(), s=5)
+    ax.set_title("Fin ray growth rates\nLMM with 95\\% CI")
+    ax.grid(alpha=0.3)
+    plt.colorbar(sc, label="Days since first image", ax=ax)
+    ax.set_xlabel("Average ray length (mm)")
+    ax.set_ylabel("Growth rate (mm/day)")
+    plt.savefig("ray_len_growth_rate.svg", bbox_inches='tight')
+    print("Saved ray length growth rates plot to ray_len_growth_rate.svg")
     plt.show()
 
 

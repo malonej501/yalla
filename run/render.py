@@ -23,7 +23,7 @@ ZOOM = 0.6  # define the how far the camera is out
 PT_SIZE = 12  # how large the cells are drawn
 PA = 0.7  # point alpha
 FA = 0.1  # fin alpha
-RA = 0.5  # ray alpha
+RA = 0.1  # ray alpha
 ANIMATE = 2  # 0 = False, 1 = Matplotlib, 2 = Vedo
 SHOW_AX = True  # show axes
 CELLS = True  # render cells if present
@@ -82,14 +82,18 @@ def render_movie(walls=False, fin=False, cells=True, rays=False):
             duration=video_length,
             backend="imageio")
 
+    no_frames = min(len(VTKS), len(W_VTKS) if W_VTKS is not None else np.nan,
+                    len(F_VTKS) if F_VTKS is not None else np.nan,
+                    len(R_VTKS) if R_VTKS is not None else np.nan)
+
     frames = []
     # Loop through the VTK files and visualize them
-    for i, vtk in enumerate(VTKS):
+    for i in range(no_frames):
 
         pts, wpts = Points([]), Points([])  # empty points object
         fmesh, rmesh = Mesh(), Mesh()  # empty mesh object
         if cells:
-            pts = Points(vtk).alpha(PA).point_size(
+            pts = Points(VTKS[i]).alpha(PA).point_size(
                 PT_SIZE * ZOOM)  # originally 10
         if walls:
             wpts = Points(W_VTKS[i]).point_size(PT_SIZE * ZOOM).color("black")
@@ -110,10 +114,10 @@ def render_movie(walls=False, fin=False, cells=True, rays=False):
             pts.cmap(cmap, C_PROP)
         br = addons.ScalarBar(pts, title=C_PROP)
 
-        info_str = f"i: {i}"
+        info_str = f"i: {i} (day {i*2})"
         if cells:
             info_str = (
-                f"i: {i}\n"
+                f"i: {i} (day {i*2})\n"
                 f"n: {len(pts.vertices)}\n" +
                 "".join([
                     f"n_{cell_type}: {len(
@@ -759,6 +763,7 @@ if __name__ == "__main__":
             PT_SIZE = int(args[args.index("-p") + 1])
 
         FOLDER_PATH = f'../run/{output_folder}'  # directory
+        W_VTKS, F_VTKS, R_VTKS = None, None, None
 
         if FUNC == 0:
             cell_vtks, wall_vtks, fin_vtks, ray_vtks = get_vtks()
