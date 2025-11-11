@@ -56,7 +56,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // counting cells in different nbhds
     // N.B. cells outside the cube size will not be counted!
     // if ((dist > 0.318) and (dist < 0.318 + 0.025)) {  // donut
-    if ((dist > 0.7) and (dist < 0.7 + 0.025)) {  // donut
+    if ((dist > 0.5) and (dist < 0.5 + 0.025)) {  // donut
         if (d_cell_type[j] == 1 || d_cell_type[j] == 3)
             d_ngs_Ad[i] += 1;
         else
@@ -93,15 +93,20 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         return dF;  // if cell movement is off, return no forces
 
     // default adhesion and repulsion vals for cell interactions
-    float Rep = d_pm.Rdd * 0.2;  // because t=0.2*day
-    float rep = d_pm.rdd;
+    float Rep = d_pm.Rxx * 0.2;  // because t=0.2*day
+    float rep = d_pm.rxx;
 
     if (d_pm.diff_adh_rep) {
-        if ((d_cell_type[i] == 1 && d_cell_type[j] == 1) ||
+        if ((d_cell_type[i] == 1 && d_cell_type[j] == 1) ||  // I-I
             (d_cell_type[i] == 3 && d_cell_type[j] == 3)) {
             Rep = d_pm.Rii * 0.2;
             rep = d_pm.rii;
         }
+        // if ((d_cell_type[i] == 3 && d_cell_type[j] == 2) ||  // I-X
+        //     (d_cell_type[i] == 2 && d_cell_type[j] == 3)) {
+        //     Rep = d_pm.Rix * 0.2;
+        //     rep = d_pm.rix;
+        // }
     }
 
 
@@ -140,25 +145,26 @@ __global__ void generate_noise(int n, curandState* d_state)
 __global__ void stage_new_cells(int n_cells, curandState* d_state, float3* d_X,
     float3* d_old_v, int* d_n_cells, Mesh_d wall_mesh)
 {
-    int i = blockIdx.x * blockDim.x +
-            threadIdx.x;  // get the index of the current cell
-    if (i >= n_cells)
-        return;  // return nothing if the index is greater than n_cells
-    if (n_cells >= (d_pm.n_max * 0.9))
-        return;  // return nothing if the no. cells starts to approach the
-                 // max
+    int i = blockIdx.x * blockDim.x + threadIdx.x;  // index of current cell
+    if (i >= n_cells) return;
+    if (n_cells >= (d_pm.n_max * 0.9)) return;
+    float r1 = curand_uniform(&d_state[i]);
+    float r2 = curand_uniform(&d_state[i]);
 
     if (i < d_pm.n_new_cells) {  // threads with i < n_new_cell create new cells
         int n = atomicAdd(d_n_cells, 1);
-        d_X[n].x = d_tis_min.x +
-                   (d_tis_max.x - d_tis_min.x) * curand_uniform(&d_state[i]);
-        d_X[n].y = d_tis_min.y +
-                   (d_tis_max.y - d_tis_min.y) * curand_uniform(&d_state[i]);
-        d_X[n].z = 0;
+        d_X[n].x = d_tis_min.x + (d_tis_max.x - d_tis_min.x) * r1;
+        d_X[n].y = d_tis_min.y + (d_tis_max.y - d_tis_min.y) * r2;
 
         d_old_v[n] = d_old_v[i];
-        // d_cell_type[n] = -1;
-        d_cell_type[n] = (i < (d_pm.n_new_cells / 2)) ? -3 : -2;
+
+        if (i < (d_pm.n_new_cells / 2)) {
+            d_cell_type[n] = -3;  // I staging type
+            d_X[n].z = 0;         // I layer z
+        } else {
+            d_cell_type[n] = -2;          // X staging type
+            d_X[n].z = 0 + d_pm.s_layer;  // X above I
+        }
         // Remove if outside mesh
         if (test_exclusion(wall_mesh, d_X[n])) {
             d_cell_type[n] = -99;  // Mark for removal
@@ -178,19 +184,51 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
 
     // if (d_cell_type[i] == 1 || d_cell_type[i] == 2) return;
 
-    if (d_cell_type[i] == -3 && d_in_slow[i] == true) {
-        if (d_ngs_A[i] > d_pm.alpha * d_ngs_B[i] &&   // self-activation short
-            d_ngs_Bd[i] > d_pm.beta * d_ngs_Ad[i] &&  // inhibition long
-            d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.eta)     // overcrowding short
-            d_cell_type[i] = 3;
-    } else if (d_cell_type[i] == -2) {
-        if (  //(d_ngs_B[i] > d_pm.phi * d_ngs_A[i] &&  // self-activation short
-              // d_ngs_Ad[i] > d_pm.psi * d_ngs_Bd[i] &&  // inhibition long
-            d_ngs_Ac[i] + d_ngs_Bc[i] < d_pm.kappa  // overcrowding short
-            || (curand_uniform(&d_state[i]) < d_pm.B_div &&
-                   d_ngs_A[i] + d_ngs_B[i] < 2))
-            d_cell_type[i] = 2;
-    }
+    // if (d_cell_type[i] == -3 && d_in_slow[i] == true) {
+    //     if (d_ngs_A[i] > d_pm.alpha &&                // self-activation
+    //           // short
+    //         d_ngs_Bd[i] > d_1pm.beta * d_ngs_Ad[i] &&  // inhibition long
+    //         d_ngs_Ac[i] < d_pm.eta)                   // overcrowding short
+    //         d_cell_type[i] = 3;
+    // } else if (d_cell_type[i] == -2) {
+    //     if ((d_ngs_B[i] > d_pm.phi &&  // self-activation short
+    //             d_ngs_Ad[i] > d_pm.psi * d_ngs_Bd[i] &&  // inhibition long
+    //             d_ngs_Bc[i] < d_pm.kappa)                // overcrowding
+    //             short
+    //         || (curand_uniform(&d_state[i]) < d_pm.B_div &&
+    //                d_ngs_A[i] + d_ngs_B[i] < 2))
+    //         d_cell_type[i] = 2;
+    // }
+    if ((d_cell_type[i] == 1 || d_cell_type[i] == 3) && d_in_slow[i] == true) {
+        if (d_ngs_A[i] < d_pm.iil && d_ngs_Bd[i] < d_pm.xid &&
+            curand_uniform(&d_state[i]) < 0.01) {
+            int n = atomicAdd(d_n_cells, 1);
+            float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
+            d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
+            d_X[n].y = d_X[i].y + (d_pm.div_dist * sinf(theta));
+            d_X[n].z = 0;
+            d_old_v[n] = d_old_v[i];
+            d_mech_str[n] = 0.0;
+            d_cell_type[n] = 3;  // new spot cell
+        }
+    } else if (d_cell_type[i] == 2) {
+        if (d_ngs_A[i] > d_pm.ixl && d_ngs_B[i] < d_pm.xxd &&
+            curand_uniform(&d_state[i]) > 0.01) {
+            int n = atomicAdd(d_n_cells, 1);
+            float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
+            d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
+            d_X[n].y = d_X[i].y + (d_pm.div_dist * sinf(theta));
+            d_X[n].z = 0 + d_pm.s_layer;
+            d_old_v[n] = d_old_v[i];
+            d_mech_str[n] = 0.0;
+            d_cell_type[n] = 2;  // new non-spot cell
+        }
+    }  // else if (d_cell_type[i] == -2) {  // some random non-spot division
+       //  if (curand_uniform(&d_state[i]) < d_pm.B_div &&
+       //      d_ngs_A[i] + d_ngs_B[i] < 2) {
+       //      d_cell_type[i] = 2;
+       //  }
+    // }
 }
 
 __global__ void death(
@@ -203,16 +241,25 @@ __global__ void death(
 
     // short-range competition spot cells
     // if spot and non-spot in nbhd exceed spot, die
-    if (d_cell_type[i] == 3 && d_ngs_B[i] > 4 * d_ngs_A[i]) d_cell_type[i] = -1;
+    // if (d_cell_type[i] == 3 && d_ngs_B[i] > 4 * d_ngs_A[i]) d_cell_type[i] =
+    // -1;
 
     // short-range competition non-spot cells
     // if non-spot and no. spot in nbhd  exceeds no. non-spot, die
-    if (d_cell_type[i] == 2 && d_ngs_A[i] > d_ngs_B[i]) d_cell_type[i] = -2;
+    // if (d_cell_type[i] == 2 && d_ngs_A[i] > d_ngs_B[i]) d_cell_type[i] = -2;
     // long range spot-cell death condition
     // if spot and no. spot in donut exceeds no. non-spot, die
-    if (d_cell_type[i] == 3 && d_ngs_Ad[i] > d_pm.xi * d_ngs_Bd[i] &&
-        (r > d_pm.q_death)) {  // self-repression long range
+    // if (d_cell_type[i] == 3 && d_ngs_Ad[i] > d_pm.xi * d_ngs_Bd[i] &&
+    //     (r > d_pm.q_death)) {  // self-repression long range
+    //     d_cell_type[i] = -1;
+    // }
+    if (d_cell_type[i] == 3 &&
+        d_ngs_Bd[i] > d_pm.xidd) {  // X repress I long range
         d_cell_type[i] = -1;
+    }
+    if (d_cell_type[i] == 2 &&
+        d_ngs_Ad[i] > d_pm.ixdd) {  // I repress X long range
+        d_cell_type[i] = -2;
     }
 }
 
@@ -226,6 +273,7 @@ __global__ void cell_switching(
         if (d_cell_type[i] == 1 &&
             d_in_slow[i]) {  // restrict switching to slow region
             d_cell_type[i] = 3;
+            d_X[i].z = 0;  // I layer z
         }
     }
 }
@@ -524,11 +572,19 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         *cells.h_n = std::distance(cells.h_X, new_n);
         for (int i = 0; i < h_pm.n_0; i++) {  // set cell types
             // spot cells appear in topmost 15% of tissue
-            if (cells.h_X[i].y > tis.get_maximum().y - (y_len * 0.15))
-                cell_type.h_prop[i] = (std::rand() % 100 < 50) ? 1 : 2;
-            else
+            if (cells.h_X[i].y > tis.get_maximum().y - (y_len * 0.15)) {
+                if (std::rand() % 100 < 50) {
+                    cell_type.h_prop[i] = 1;
+                    cells.h_X[i].z = 0;  // I layer z=0
+                } else {
+                    cell_type.h_prop[i] = 2;
+                    cells.h_X[i].z = 0 + h_pm.s_layer;  // X above I
+                }
+            } else {
                 cell_type.h_prop[i] = 2;
-        }
+                cells.h_X[i].z = 0 + h_pm.s_layer;  // X above I
+            }
+        };
         update_slow_reg(tis, slow_reg);
         cudaMemcpy(
             d_slow_reg, slow_reg, 2 * sizeof(float), cudaMemcpyHostToDevice);
