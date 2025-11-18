@@ -31,6 +31,7 @@ STAGE = 15  # 0-21
 R_RAD = 0.085  # radius for neighbour counts within radius (mm)
 A_RAD = 0.5  # inner radius for annulus neighbour counts (mm)
 A_DELTA = 0.025  # width of annulus for annulus neighbour counts (mm)
+EXPORT = False  # whether to export plots
 
 # matplotlib.use("pgf")
 # plt.style.use("../misc/stylesheet.mplstyle")
@@ -298,6 +299,7 @@ class DelaunayTri():
         ax.set_aspect("equal")
         ax.set_title(f"Delaunay Triangulation\n{self.hfile}")
         plt.show()
+        return fig, ax
 
 
 class KNNGraph():
@@ -370,8 +372,9 @@ class KNNGraph():
         fig.supylabel("PD (mm)")
         ax.grid(alpha=0.3)
         ax.set_title(f"k-NN Graph (k={self.k})\n{self.hfile} ")
-
         plt.show()
+
+        return fig, ax
 
 
 class nb_counts_animation():
@@ -429,6 +432,57 @@ class nb_counts_animation():
         # plt.show()
 
 
+def nb_counts_all(region: int = 0):
+    """Plot neighbour counts for all fins of a single fish.
+    0 ... within radius
+    1 ... within annulus"""
+
+    seg = Cell_seg(WD)
+    fish_dat = seg.metadata[seg.metadata["id"] ==
+                            f"DA-{1+FISH_ID}"]
+    # idx = idx[idx["stage"] == STAGE]
+    # idx = idx.index[0]
+    print(fish_dat)
+
+    fig, axs = plt.subplots(ncols=6, nrows=4, figsize=(16, 8),
+                            layout="constrained",
+                            # sharex=True, sharey=True
+                            )
+
+    counts = []
+    for _, row in fish_dat.iterrows():
+        fin = seg.fins[row.name]
+        counts.append(fin.counts_within_radius(R_RAD))
+    all_counts = np.concatenate(counts)
+    vmax = all_counts.max()
+    axs = axs.flatten()
+    for i, (_, row) in enumerate(fish_dat.iterrows()):
+        fin = seg.fins[row.name]
+        if fin.sb_len is None:
+            print(f"Skipping {fin.hfile} due to missing scale bar.")
+            continue
+        sc = axs[i].scatter(fin.centroids()[:, 0], fin.centroids()[:, 1],
+                            c=counts[i], cmap="viridis", s=2,
+                            vmin=0, vmax=vmax)
+        axs[i].set_title(f"{fin.fish_id}_{fin.date}")
+        axs[i].set_aspect("equal")
+        axs[i].grid(alpha=0.3)
+        img = plt.imread(fin.img_pth)
+        extent = [0, img.shape[1]/fin.sb_len, -img.shape[0]/fin.sb_len, 0]
+        axs[i].imshow(img, extent=extent)
+
+    for ax in axs[i+1:]:
+        ax.axis("off")
+    if region == 0:
+        lab = f"N within radius {R_RAD} mm"
+    else:
+        lab = f"N within annulus {A_RAD}-{A_RAD + A_DELTA} mm"
+    fig.colorbar(sc, ax=axs.ravel().tolist(), label=lab,
+                 shrink=0.25, location="bottom")
+    fig.suptitle(WD)
+    plt.show()
+
+
 def print_help():
     """Print help message and exit."""
     help_text = """
@@ -441,6 +495,9 @@ def print_help():
                         0 ... Plot k-NN graph for one fin
                         1 ... Plot Delaunay triangulation for one fin
                         2 ... Plot neighbour counts for one fin
+                        3 ... Plot probability map for one fin
+                        5 ... Animate neighbour counts over stages for one fish
+                        6 ... Plot neighbour counts for all fins of one fish
     """
     print(help_text)
     sys.exit()
@@ -452,22 +509,29 @@ if __name__ == "__main__":
         print_help()
     if "-d" in args:
         WD = args[args.index("-d") + 1].rstrip("/")
+    if "-e" in args:
+        EXPORT
     if "-f" in args:
         FUNC = int(args[args.index("-f") + 1])
         if FUNC == 0:
             seg = Cell_seg(WD)
-            idx = seg.metadata[seg.metadata["id"] ==
-                               f"DA-{1+FISH_ID}-1{FISH_ID}"]
-            idx = idx[idx["stage"] == STAGE]
-            idx = idx.index[0]
-            seg.fins[idx].knn_graph().plot()
+            fish_dat = seg.metadata[seg.metadata["id"] ==
+                                    f"DA-{1+FISH_ID}"]
+            fish_dat = fish_dat[fish_dat["stage"] == STAGE]
+            idx = fish_dat.index[0]
+            fig, _ = seg.fins[idx].knn_graph().plot()
+            date = fish_dat.iloc[0]["date"].strftime("%Y-%m-%d")
+
+            fig.savefig(f"DA-{1+FISH_ID}_{date}_knn.svg")
         elif FUNC == 1:
             seg = Cell_seg(WD)
-            idx = seg.metadata[seg.metadata["id"] ==
-                               f"DA-{1+FISH_ID}-1{FISH_ID}"]
-            idx = idx[idx["stage"] == STAGE]
-            idx = idx.index[0]
-            seg.fins[idx].delaunay().plot()
+            fish_dat = seg.metadata[seg.metadata["id"] ==
+                                    f"DA-{1+FISH_ID}"]
+            fish_dat = fish_dat[fish_dat["stage"] == STAGE]
+            idx = fish_dat.index[0]
+            date = fish_dat.iloc[0]["date"].strftime("%Y-%m-%d")
+            fig, _ = seg.fins[idx].delaunay().plot()
+            fig.savefig(f"DA-{1+FISH_ID}_{date}_delaunay.svg")
         elif FUNC == 2:
             seg = Cell_seg(WD)
             print(seg.metadata)
@@ -478,9 +542,22 @@ if __name__ == "__main__":
             seg.fins[idx].plot_nb_counts()
         elif FUNC == 3:
             seg = Cell_seg(WD)
-            seg.fins[35].plot_probs()
+            fish_dat = seg.metadata[seg.metadata["id"] ==
+                                    f"DA-{1+FISH_ID}"]
+            fish_dat = fish_dat[fish_dat["stage"] == STAGE]
+            idx = fish_dat.index[0]
+            seg.fins[idx].plot_probs()
         elif FUNC == 4:
+            seg = Cell_seg(WD)
+            idx = seg.metadata[seg.metadata["id"] ==
+                               f"DA-{1+FISH_ID}"]
+            idx = idx[idx["stage"] == STAGE]
+            idx = idx.index[0]
+            seg.fins[idx].plot_seg()
+        elif FUNC == 5:
             ani = nb_counts_animation(WD, FISH_ID)
             ani.animate()
+        elif FUNC == 6:
+            nb_counts_all()
     else:
         print_help()
