@@ -7,7 +7,7 @@ from vedo import *
 class Fin:
     """Class to generate a fin shape with rays."""
 
-    def __init__(self, nrays=11, ap=2.5, height=2, smooth=1, theta=140):
+    def __init__(self, nrays=11, ap=2.5, height=1.75, smooth=1, theta=140):
         self.nrays = nrays
         self.ray_width = 0.05  # width of rays n.b. this is altered later by scaling
         self.ap = ap  # anterior-posterior length at proximal side
@@ -121,7 +121,7 @@ class Fin:
         plt.grid()
         plt.show()
 
-    def extrude_z(self, amount=0.1):
+    def extrude_z(self, amount=0.3): # amount is in mm
         """Extrude the fin shape in the z-direction."""
 
         verts = self.pflat + self.dflat
@@ -238,6 +238,7 @@ class Fin:
             # for ray in self.rays:
             #     for pt in ray:
             #         vtk_file.write()
+        print(f"Fin saved to fin_{filename}")
 
         with open(f"ray_{filename}", 'w', encoding='utf-8') as ray_file:
             ray_file.write("# vtk DataFile Version 3.0\n")
@@ -259,15 +260,16 @@ class Fin:
                 for vert in face:
                     ray_file.write(" " + str(vert))
                 ray_file.write("\n")
+        print(f"Rays saved to ray_{filename}")
 
 
 if __name__ == "__main__":
     fin = Fin()
     # fin.plot_2d()
     fin.extrude_z()
-    fin.plot_3d()
+    # fin.plot_3d()
     # fin.grow()
-    fin.plot_2d()
+    # fin.plot_2d()
     fin.to_file()
     # for i in range(10):
     #     fin.grow()
