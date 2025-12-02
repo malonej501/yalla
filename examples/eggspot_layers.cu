@@ -43,8 +43,6 @@ __device__ float3 d_tis_min;  // min coordinate of tissue mesh
 __device__ float3 d_tis_max;  // max coordinate of tissue mesh
 __device__ int* d_ngs_A;      // no. spot cells in neighbourhood
 __device__ int* d_ngs_B;      // no. non-spot cells in neighbourhood
-__device__ int* d_ngs_Ac;     // overcrowded neighbourhood
-__device__ int* d_ngs_Bc;     // overcrowded neighbourhood
 __device__ int* d_ngs_Ad;     // donut neighbourhood
 __device__ int* d_ngs_Bd;     // donut neighbourhood
 
@@ -56,17 +54,11 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // counting cells in different nbhds
     // N.B. cells outside the cube size will not be counted!
     // if ((dist > 0.318) and (dist < 0.318 + 0.025)) {  // donut
-    if ((dist > 0.5) and (dist < 0.5 + 0.025)) {  // donut
+    if ((dist > 0.3) and (dist < 0.3 + 0.025)) {  // donut
         if (d_cell_type[j] == 1 || d_cell_type[j] == 3)
             d_ngs_Ad[i] += 1;
         else
             d_ngs_Bd[i] += 1;
-    }
-    if (dist < 0.075) {  // overcrowding region
-        if (d_cell_type[j] == 1 || d_cell_type[j] == 3)
-            d_ngs_Ac[i] += 1;
-        else
-            d_ngs_Bc[i] += 1;
     }
     if (dist < 0.085) {  // inner disc for cell proliferation conditions
         if (d_cell_type[j] == 1 || d_cell_type[j] == 3)
@@ -91,6 +83,11 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     // Mechanical forces
     if (!d_pm.mov_switch)
         return dF;  // if cell movement is off, return no forces
+
+    if (d_cell_type[i] != d_cell_type[j]) {
+        // different cell types have no mechanical interaction
+        return dF;
+    }
 
     // default adhesion and repulsion vals for cell interactions
     float Rep = d_pm.Rxx * 0.2;  // because t=0.2*day
@@ -201,7 +198,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
     // }
     if ((d_cell_type[i] == 1 || d_cell_type[i] == 3) && d_in_slow[i] == true) {
         if (d_ngs_A[i] < d_pm.iil && d_ngs_Bd[i] < d_pm.xid &&
-            curand_uniform(&d_state[i]) < 0.01) {
+            curand_uniform(&d_state[i]) < 0.001) {
             int n = atomicAdd(d_n_cells, 1);
             float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
             d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
@@ -212,8 +209,8 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
             d_cell_type[n] = 3;  // new spot cell
         }
     } else if (d_cell_type[i] == 2) {
-        if (d_ngs_A[i] > d_pm.ixl && d_ngs_B[i] < d_pm.xxd &&
-            curand_uniform(&d_state[i]) > 0.01) {
+        if (d_ngs_A[i] > d_pm.ixl && d_ngs_B[i] < d_pm.xxl &&
+            curand_uniform(&d_state[i]) < 0.002) {
             int n = atomicAdd(d_n_cells, 1);
             float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
             d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
@@ -253,12 +250,12 @@ __global__ void death(
     //     (r > d_pm.q_death)) {  // self-repression long range
     //     d_cell_type[i] = -1;
     // }
-    if (d_cell_type[i] == 3 &&
-        d_ngs_Bd[i] > d_pm.xidd) {  // X repress I long range
+    if (d_cell_type[i] == 3 && d_ngs_Bd[i] > d_pm.xidd &&
+        curand_uniform(&d_state[i]) < 0.005) {  // X repress I long range
         d_cell_type[i] = -1;
     }
-    if (d_cell_type[i] == 2 &&
-        d_ngs_Ad[i] > d_pm.ixdd) {  // I repress X long range
+    if (d_cell_type[i] == 2 && d_ngs_Ad[i] > d_pm.ixdd &&
+        curand_uniform(&d_state[i]) < 0.01) {  // I repress X long range
         d_cell_type[i] = -2;
     }
 }
@@ -296,7 +293,7 @@ void update_slow_reg(MeshType& tis, float slow_reg[2])
     slow_reg[1] = p2;
     // cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
     //     cudaMemcpyHostToDevice);  // copy to device
-    std::cout << "slow region y: " << p1 << " to " << p2 << "\n";
+    // std::cout << "slow region y: " << p1 << " to " << p2 << "\n";
 }
 
 __global__ void advection(int n_cells, const float3* d_X, float3* d_dX,
@@ -391,13 +388,11 @@ struct is_dead {
 
 void compact_cells_with_remove_if(int n_cells, float3* d_X, float3* d_W,
     int* d_cell_type, float* d_mech_str, bool* d_in_slow, int* d_ngs_A,
-    int* d_ngs_B, int* d_ngs_Ac, int* d_ngs_Bc, int* d_ngs_Ad, int* d_ngs_Bd,
-    int* d_n_cells)
+    int* d_ngs_B, int* d_ngs_Ad, int* d_ngs_Bd, int* d_n_cells)
 {
     // Create zip iterators for all arrays
-    auto first = thrust::make_zip_iterator(
-        thrust::make_tuple(d_cell_type, d_X, d_W, d_mech_str, d_in_slow,
-            d_ngs_A, d_ngs_B, d_ngs_Ac, d_ngs_Bc, d_ngs_Ad, d_ngs_Bd));
+    auto first = thrust::make_zip_iterator(thrust::make_tuple(d_cell_type, d_X,
+        d_W, d_mech_str, d_in_slow, d_ngs_A, d_ngs_B, d_ngs_Ad, d_ngs_Bd));
     auto last = first + n_cells;
 
     // Remove dead cells (cell_type < 0) from all arrays
@@ -410,7 +405,8 @@ void compact_cells_with_remove_if(int n_cells, float3* d_X, float3* d_W,
 }
 
 
-int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
+int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
+    bool last_vtk_only = true)
 {
     std::cout << std::fixed
               << std::setprecision(6);  // set precision for floats
@@ -445,10 +441,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     cudaMemcpyToSymbol(d_ngs_A, &ngs_A.d_prop, sizeof(d_ngs_A));
     Property<int> ngs_B{h_pm.n_max, "ngs_B"};
     cudaMemcpyToSymbol(d_ngs_B, &ngs_B.d_prop, sizeof(d_ngs_B));
-    Property<int> ngs_Ac{h_pm.n_max, "ngs_Ac"};
-    cudaMemcpyToSymbol(d_ngs_Ac, &ngs_Ac.d_prop, sizeof(d_ngs_Ac));
-    Property<int> ngs_Bc{h_pm.n_max, "ngs_Bc"};
-    cudaMemcpyToSymbol(d_ngs_Bc, &ngs_Bc.d_prop, sizeof(d_ngs_Bc));
     Property<int> ngs_Ad{h_pm.n_max, "ngs_Ad"};
     cudaMemcpyToSymbol(d_ngs_Ad, &ngs_Ad.d_prop, sizeof(d_ngs_Ad));
     Property<int> ngs_Bd{h_pm.n_max, "ngs_Bd"};
@@ -599,8 +591,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
         in_slow.h_prop[i] = false;
         ngs_A.h_prop[i] = 0;
         ngs_B.h_prop[i] = 0;
-        ngs_Ac.h_prop[i] = 0;
-        ngs_Bc.h_prop[i] = 0;
         ngs_Ad.h_prop[i] = 0;
         ngs_Bd.h_prop[i] = 0;
     }
@@ -619,10 +609,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             thrust::device, ngs_A.d_prop, ngs_A.d_prop + cells.get_d_n(), 0);
         thrust::fill(
             thrust::device, ngs_B.d_prop, ngs_B.d_prop + cells.get_d_n(), 0);
-        thrust::fill(
-            thrust::device, ngs_Ac.d_prop, ngs_Ac.d_prop + cells.get_d_n(), 0);
-        thrust::fill(
-            thrust::device, ngs_Bc.d_prop, ngs_Bc.d_prop + cells.get_d_n(), 0);
         thrust::fill(
             thrust::device, ngs_Ad.d_prop, ngs_Ad.d_prop + cells.get_d_n(), 0);
         thrust::fill(
@@ -643,8 +629,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     in_slow.copy_to_device();
     ngs_A.copy_to_device();
     ngs_B.copy_to_device();
-    ngs_Ac.copy_to_device();
-    ngs_Bc.copy_to_device();
     ngs_Ad.copy_to_device();
     ngs_Bd.copy_to_device();
 
@@ -654,31 +638,28 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
     // initialise properties by taking a zero dt step
     cells.take_step<pairwise_force>(0.0, generic_function);
 
-    // write out initial condition
-    cells.copy_to_host();
-    mech_str.copy_to_host();
-    cell_type.copy_to_host();
-    in_slow.copy_to_host();
-    ngs_A.copy_to_host();
-    ngs_B.copy_to_host();
-    ngs_Ac.copy_to_host();
-    ngs_Bc.copy_to_host();
-    ngs_Ad.copy_to_host();
-    ngs_Bd.copy_to_host();
+    if (!last_vtk_only) {
+        // write out initial condition
+        cells.copy_to_host();
+        mech_str.copy_to_host();
+        cell_type.copy_to_host();
+        in_slow.copy_to_host();
+        ngs_A.copy_to_host();
+        ngs_B.copy_to_host();
+        ngs_Ad.copy_to_host();
+        ngs_Bd.copy_to_host();
 
-    output.write_positions(cells);
-    output.write_property(mech_str);
-    output.write_property(cell_type);
-    output.write_property(in_slow);
-    output.write_property(ngs_A);
-    output.write_property(ngs_B);
-    output.write_property(ngs_Ac);
-    output.write_property(ngs_Bc);
-    output.write_property(ngs_Ad);
-    output.write_property(ngs_Bd);
-
-    fin.write_vtk();
-    fin_rays.write_vtk();
+        output.write_positions(cells);
+        output.write_property(mech_str);
+        output.write_property(cell_type);
+        output.write_property(in_slow);
+        output.write_property(ngs_A);
+        output.write_property(ngs_B);
+        output.write_property(ngs_Ad);
+        output.write_property(ngs_Bd);
+        fin.write_vtk();
+        fin_rays.write_vtk();
+    }
 
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
@@ -730,22 +711,21 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             // }
             compact_cells_with_remove_if(cells.get_d_n(), cells.d_X, W.d_prop,
                 cell_type.d_prop, mech_str.d_prop, in_slow.d_prop, ngs_A.d_prop,
-                ngs_B.d_prop, ngs_Ac.d_prop, ngs_Bc.d_prop, ngs_Ad.d_prop,
-                ngs_Bd.d_prop, cells.d_n);
+                ngs_B.d_prop, ngs_Ad.d_prop, ngs_Bd.d_prop, cells.d_n);
 
             cells.take_step<pairwise_force, friction_on_background>(
                 h_pm.dt, generic_function);
         }
 
-        if (time_step % int(h_pm.cont_time / h_pm.no_frames) == 0) {
+        if (!last_vtk_only &&
+                time_step % int(h_pm.cont_time / h_pm.no_frames) == 0 ||
+            (time_step == h_pm.cont_time)) {
             cells.copy_to_host();
             mech_str.copy_to_host();
             cell_type.copy_to_host();
             in_slow.copy_to_host();
             ngs_A.copy_to_host();
             ngs_B.copy_to_host();
-            ngs_Ac.copy_to_host();
-            ngs_Bc.copy_to_host();
             ngs_Ad.copy_to_host();
             ngs_Bd.copy_to_host();
 
@@ -756,8 +736,6 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
             output.write_property(in_slow);
             output.write_property(ngs_A);
             output.write_property(ngs_B);
-            output.write_property(ngs_Ac);
-            output.write_property(ngs_Bc);
             output.write_property(ngs_Ad);
             output.write_property(ngs_Bd);
             fin.write_vtk();
@@ -772,9 +750,10 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0)
 #ifndef COMPILE_AS_LIBRARY
 int main(int argc, char const* argv[])
 {
+    bool last_vtk_only = false;
     int walk_id = 0, step = 0;
     if (argc > 1) walk_id = std::atoi(argv[1]);
     if (argc > 2) step = std::atoi(argv[2]);
-    return tissue_sim(argc, argv, walk_id, step);
+    return tissue_sim(argc, argv, walk_id, step, last_vtk_only);
 }
 #endif
