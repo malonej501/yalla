@@ -35,7 +35,7 @@ fi
 output=$(addqueue -c $comment -q $queue -s --gpus $n_gpus --gputype $gpu_type -m $mem ./exec 2>&1)
 
 cp ../examples/eggspot_layers.cu output/eggspot_layers.cu # copy source code into output directory
-
+cp ../sample/spot_finder.cu output/spot_finder.cu # copy source code into output directory
 # echo $output
 # # capture job id from console output
 # job_id=$(echo "$output" | grep -oP 'exec-\K[0-9]+(?=\.out)')
