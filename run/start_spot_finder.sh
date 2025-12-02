@@ -8,6 +8,25 @@ queue="gpulong"            # gpushort, gpulong
 mem=4                       # allocated memory in GB
 comment="none"            # comment for the job
 
+# get command line arguments
+POSITIONAL_ARGS=()      # array to hold positional arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -o|--outdir)
+        out_dir_name="$2"
+        shift # past argument
+        shift # past value
+        ;;
+    *)    # unknown option
+        POSITIONAL_ARGS+=("$1") # save it in an array for later
+        shift # past argument
+        ;;
+  esac
+done
+set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
+
+mkdir ${out_dir_name}
+
 # prepare the environment and load necessary modules
 source /etc/profile
 cd /mnt/users/jmalone/GitHub/yalla/run
@@ -32,10 +51,10 @@ if [ -f /mnt/users/jmalone/.addqueuelock ]; then
 fi
 
 # execute compiled model on cluster and capture console output
-output=$(addqueue -c $comment -q $queue -s --gpus $n_gpus --gputype $gpu_type -m $mem ./exec 2>&1)
+output=$(addqueue -c $comment -q $queue -s --gpus $n_gpus --gputype $gpu_type -m $mem ./exec ${out_dir_name} 2>&1)
 
-cp ../examples/eggspot_layers.cu output/eggspot_layers.cu # copy source code into output directory
-cp ../sample/spot_finder.cu output/spot_finder.cu # copy source code into output directory
+cp ../examples/eggspot_layers.cu ${out_dir_name}/eggspot_layers.cu # copy source code into output directory
+cp ../sample/spot_finder.cu ${out_dir_name}/spot_finder.cu # copy source code into output directory
 # echo $output
 # # capture job id from console output
 # job_id=$(echo "$output" | grep -oP 'exec-\K[0-9]+(?=\.out)')
