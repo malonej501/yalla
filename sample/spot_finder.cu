@@ -27,18 +27,31 @@ const int n_steps = 1000;   // number of iterations in chain
 Pm h_def_pm;
 
 // Per-parameter integer ranges for LHS (order: iil, xid, ixl, xxl, xidd, ixdd)
-static array<int, 6> lh_low = {1, 1, 1, 1, 1, 1};
-static array<int, 6> lh_high = {100, 100, 100, 100, 100, 100};
+// static array<int, 6> lh_low = {1, 1, 1, 1, 1, 1};
+// static array<int, 6> lh_high = {100, 100, 100, 100, 100, 100};
+template<typename T>
+struct Targets {
+    const char* name;
+    T low;
+    T high;
+    T Pm::* member;  // pointer to member of Pm
+};
 
-// Setter to allow customizing ranges before sampling
-void set_lh_ranges(const array<int, 6>& low, const array<int, 6>& high)
-{
-    for (int i = 0; i < 6; ++i) {
-        lh_low[i] = low[i];
-        lh_high[i] = high[i];
-        if (lh_high[i] <= lh_low[i]) lh_high[i] = lh_low[i] + 1;
-    }
-}
+static constexpr std::array<Targets<int>, 6> lh_int_targets{
+    {{"iil", 1, 100, &Pm::iil}, 
+    {"xid", 1, 100, &Pm::xid},
+    {"ixl", 1, 100, &Pm::ixl}, 
+    {"xxl", 1, 100, &Pm::xxl},
+    {"xidd", 1, 100, &Pm::xidd}, 
+    {"ixdd", 1, 100, &Pm::ixdd}}
+};
+
+static constexpr std::array<Targets<float>, 4> lh_float_targets{
+    {{"qia", 0.0f, 0.002f, &Pm::qia}, 
+    {"qxa", 0.0f, 0.002f, &Pm::qxa},
+    {"qir", 0.0f, 0.01f, &Pm::qir}, 
+    {"qxr", 0.0f, 0.01f, &Pm::qxr}}
+};
 
 string mutate(Pm& h_pm)
 {
@@ -69,77 +82,105 @@ string mutate(Pm& h_pm)
 
 string mutate_lh(Pm& h_pm)
 {
-    // Latin Hypercube mutation: sets all six integer targets according to
-    // a precomputed Latin Hypercube sample. On first call the LHS matrix
-    // is generated using per-parameter ranges stored in `lh_low`/`lh_high`.
-    // N.B. integer collisisons may occur due to rounding.
-
-    static bool initialized = false;  // whether LHS samples have been generated
-    static vector<array<int, 6>> samples;  // n_steps rows x 6 params
+    static bool initialized = false;
+    static vector<vector<double>>
+        samples;  // each row is all parameters (ints+floats)
     static int next_row = 0;
 
-    if (!initialized) {  // construct samples only once
-        const int n = n_steps > 0 ? n_steps : 1;
-        samples.resize(n);
+    const int n_int = lh_int_targets.size();
+    const int n_float = lh_float_targets.size();
+    const int n_params = n_int + n_float;
 
-        // RNG (use fixed seed for reproducibility if desired)
-        random_device rd;
-        mt19937 gen(rd());
+    if (!initialized) {
 
-        for (int j = 0; j < 6; ++j) {  // for each parameter
-            int low = lh_low[j];
-            int high = lh_high[j];
-            int range = high - low;
-            if (range <= 0) range = 1;
+        samples.assign(n_steps, vector<double>(n_params));
 
-            // generate stratified points and random offset within strata
-            vector<double> points(n);      // no. points = no. samples
-            for (int i = 0; i < n; ++i) {  // for each stratum
-                uniform_real_distribution<> d(0.0, 1.0);
-                points[i] = (i + d(gen)) / static_cast<double>(n);
-            }
+        std::random_device rd;
+        std::mt19937 gen(rd());
 
-            // scale to integer range
-            vector<int> col(n);
-            for (int i = 0; i < n; ++i) {
-                double scaled = low + points[i] * range;
-                col[i] = static_cast<int>(round(scaled));
-            }
+        // ----------------------------------------
+        // Generate LHS columns for INT parameters
+        // ----------------------------------------
+        for (int j = 0; j < n_int; ++j) {
+            const auto& tgt = lh_int_targets[j];
+            double low = tgt.low;
+            double high = tgt.high;
+            double range = std::max(1.0, high - low);
 
-            // permute column to create LHS
-            // previous loop creates samples based on value of i, so shuffle to
-            // remove correlation between parameters (i.e. so not along diagonal
-            // of hypercube)
-            shuffle(col.begin(), col.end(), gen);
+            // stratified points
+            vector<double> pts(n_steps);
+            std::uniform_real_distribution<> dist(0.0, 1.0);
+            
+            for (int i = 0; i < n_steps; ++i) pts[i] = (i + dist(gen)) / n_steps;
 
-            // write into samples
-            for (int i = 0; i < n; ++i) samples[i][j] = col[i];
-            cout << "LHS parameter " << j << " range [" << low << ", " << high
-                 << "], samples: ";
+            // scale to range
+            vector<double> col(n_steps);
+            for (int i = 0; i < n_steps; ++i) col[i] = low + pts[i] * range;
+            // permute the column
+            std::shuffle(col.begin(), col.end(), gen);
+
+            for (int i = 0; i < n_steps; ++i) samples[i][j] = col[i];
+            cout << "LHS int param " << tgt.name << " range [" << low << ", "
+                 << high << "]\n";
+        }
+
+        // ----------------------------------------
+        // Generate LHS columns for FLOAT parameters
+        // ----------------------------------------
+        for (int j = 0; j < n_float; ++j) {
+            const auto& tgt = lh_float_targets[j];
+            double low = tgt.low;
+            double high = tgt.high;
+            double range = std::max(1e-12, high - low);
+
+            vector<double> pts(n_steps);
+            std::uniform_real_distribution<> dist(0.0, 1.0);
+
+            for (int i = 0; i < n_steps; ++i) pts[i] = (i + dist(gen)) / n_steps;
+            vector<double> col(n_steps);
+            for (int i = 0; i < n_steps; ++i) col[i] = low + pts[i] * range;
+
+            std::shuffle(col.begin(), col.end(), gen);
+
+            for (int i = 0; i < n_steps; ++i) samples[i][n_int + j] = col[i];
+            cout << "LHS float param " << tgt.name << " range [" << low << ", "
+                 << high << "]\n";
         }
 
         initialized = true;
         next_row = 0;
     }
 
-    int row = next_row % static_cast<int>(samples.size());
-    auto& vals = samples[row];
+    // ----------------------------------------
+    // Apply one row of samples to Pm
+    // ----------------------------------------
+    int row = next_row % samples.size();
+    const auto& vals = samples[row];
 
-    h_pm.iil = vals[0];
-    h_pm.xid = vals[1];
-    h_pm.ixl = vals[2];
-    h_pm.xxl = vals[3];
-    h_pm.xidd = vals[4];
-    h_pm.ixdd = vals[5];
+    // ints
+    for (size_t j = 0; j < lh_int_targets.size(); ++j) {
+        const auto& tgt = lh_int_targets[j];
+        h_pm.*(tgt.member) = int(std::round(vals[j]));
+    }
+
+    // floats
+    for (size_t j = 0; j < lh_float_targets.size(); ++j) {
+        const auto& tgt = lh_float_targets[j];
+        h_pm.*(tgt.member) = float(vals[n_int + j]);
+    }
 
     next_row++;
 
-    const char* names[] = {"iil", "xid", "ixl", "xxl", "xidd", "ixdd"};
+    // printing (optional)
     cout << "Applied LHS row " << row << ": ";
-    for (int k = 0; k < 6; ++k)
-        cout << names[k] << "=" << vals[k] << (k + 1 < 6 ? ", " : "\n");
+    for (int j = 0; j < n_int; ++j)
+        cout << lh_int_targets[j].name << "=" << int(std::round(vals[j]))
+             << ", ";
+    for (int j = 0; j < n_float; ++j)
+        cout << lh_float_targets[j].name << "=" << vals[n_int + j]
+             << (j + 1 < n_float ? ", " : "\n");
 
-    return string("mutate_lh_row_" + to_string(row));
+    return "mutate_lh_row_" + to_string(row);
 }
 
 // string mutate(Pm& h_pm)
@@ -165,8 +206,10 @@ string mutate_lh(Pm& h_pm)
 //     return t_pair.first;
 // }
 
-int main()
+int main(int argc, char const* argv[])
 {
+    string out_dir_name = "output";
+    if (argc > 1) out_dir_name = string(argv[1]);
     int walk_id = 0;
     int attempt = 0;
     string status = "pass";
@@ -178,14 +221,13 @@ int main()
     for (int i = 0; i < n_steps; i++) {
         cout << "Step: " << i << endl;
         string target = mutate_lh(h_pm);  // select target and change
-        tissue_sim(0, NULL, walk_id, i);
+        tissue_sim(0, NULL, walk_id, i, true, out_dir_name);
         // check output
-
+        
         system(
-            (". ../venv/bin/activate && python3 ../run/render.py output -f 2 "
-             "-w " +
-                to_string(walk_id) + " -s " + to_string(i))
-                .c_str());
+            (". ../venv/bin/activate && python3 ../run/render.py " + 
+                out_dir_name + " -f 2 -w " + to_string(walk_id) + 
+                " -s " + to_string(i)).c_str());
         write_report_row(
             report_file, walk_id, i, attempt, status, target, h_pm);
         report_file.flush();  // flush the buffer
