@@ -4,9 +4,9 @@
 # cluster parameters
 n_gpus=1
 gpu_type="rtx2080with12gb"  # rtx2080with12gb, rtx3090with24gb
-queue="gpushort"            # gpushort, gpulong
+queue="gpulong"            # gpushort, gpulong
 mem=4                       # allocated memory in GB
-comment="3_mins"            # comment for the job
+comment="none"            # comment for the job
 
 # prepare the environment and load necessary modules
 source /etc/profile
@@ -17,7 +17,7 @@ module load cuda
 
 # generate .h file from default parameters
 source ../venv/bin/activate
-python3 ../sample/pwriter.py
+python3 ../sample/pwriter.py -p eggspot_layers_params.csv
 deactivate
 
 # compile the model
@@ -34,18 +34,20 @@ fi
 # execute compiled model on cluster and capture console output
 output=$(addqueue -c $comment -q $queue -s --gpus $n_gpus --gputype $gpu_type -m $mem ./exec 2>&1)
 
-echo $output
-# capture job id from console output
-job_id=$(echo "$output" | grep -oP 'exec-\K[0-9]+(?=\.out)')
+cp ../examples/eggspot_layers.cu output/eggspot_layers.cu # copy source code into output directory
 
-echo "Submitted Job ID: $job_id"
-# wait for the job to complete
-while squeue -u $USER | grep $job_id > /dev/null; do
-    echo "Job $job_id is still running... Elapsed time: $SECONDS seconds"
-    sleep 5  # Check every x seconds
-done
+# echo $output
+# # capture job id from console output
+# job_id=$(echo "$output" | grep -oP 'exec-\K[0-9]+(?=\.out)')
 
-echo "Job $job_id has completed."
+# echo "Submitted Job ID: $job_id"
+# # wait for the job to complete
+# while squeue -u $USER | grep $job_id > /dev/null; do
+#     echo "Job $job_id is still running... Elapsed time: $SECONDS seconds"
+#     sleep 5  # Check every x seconds
+# done
 
-mv exec-$job_id.out output/exec-$job_id.out 
-cp ../examples/eggspot.cu output/eggspot.cu # copy source code into output directory
+# echo "Job $job_id has completed."
+
+# mv exec-$job_id.out output/exec-$job_id.out 
+# cp ../examples/eggspot_layers.cu output/eggspot_layers.cu # copy source code into output directory
