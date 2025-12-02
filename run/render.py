@@ -47,11 +47,11 @@ def render_frame():
     # virtual display for offscreen rendering
     display = Display(visible=0, size=(1366, 768))
     display.start()
-    vtk = VTKS[-1]  # select final frame
+    vtk = VTKS[-1]  if isinstance(VTKS, list) else VTKS # select final frame
     cmap = "viridis"
     points = Points(vtk).point_size(PT_SIZE * ZOOM).cmap(cmap, C_PROP)
     p = show(points, interactive=False)
-    p.screenshot(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_{len(VTKS)-1}.png")
+    p.screenshot(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}.png")
     p.close()
     display.stop()
 
@@ -116,13 +116,12 @@ def render_movie(walls=False, fin=False, cells=True, rays=False):
 
         info_str = f"i: {i} (day {i*2})"
         if cells:
+            ct = pts.pointdata["cell_type"]
             info_str = (
                 f"i: {i} (day {i*2})\n"
                 f"n: {len(pts.vertices)}\n" +
                 "".join([
-                    f"n_{cell_type}: {len(
-                        pts.pointdata['cell_type'][
-                            pts.pointdata['cell_type'] == cell_type])}\n"
+                    f"n_{cell_type}: {len(ct[ct == cell_type])}\n"
                     for cell_type in cell_types
                 ])
             )
