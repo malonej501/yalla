@@ -46,29 +46,31 @@ def write_logging_instructions(params: pd.DataFrame):
     Returns:
         None
     """
+    # ensure param names have no surrounding whitespace
+    param_list = params["param"].astype(str).str.strip().tolist()
 
     with open("../sample/logging.cpp", "w") as f:
-
         f.write("#include <fstream>\n")
         f.write("#include <string>\n")
         f.write('#include "../params/params.h"\n\n')
 
+        # header: use commas without spaces
         f.write("void write_report_header(std::ofstream& file) {\n")
-        step_info_h = "walk_id, step, attempt, status, target, "
-        param_names = ", ".join(params["param"].astype(str).tolist())
-        header = step_info_h + param_names
-        f.write(f'\tfile << "{header}' + r'\n";' + '\n')
+        step_info_h = "walk_id,step,attempt,status,target"
+        header = step_info_h + "," + ",".join(param_list) if param_list else step_info_h
+        f.write(f'\tfile << "{header}\\n";\n')
         f.write("}\n\n")
 
+        # row: build the C++ expression piecewise so there are no spaces in output cells
         f.write("void write_report_row(std::ofstream& file, int walk_id, "
                 "int i, int attempt, std::string status, std::string target, const "
                 "Pm& h_pm) {\n")
-        step_info_r = ' << walk_id << "," << i << "," << attempt << "," << ' \
-            'status << "," << target << "," << h_pm.'
-        h_pm_names = ' << "," << h_pm.' \
-            ''.join(params["param"].astype(str).tolist())
-        row = step_info_r + h_pm_names
-        f.write(f"\tfile {row} <<" + r'"\n";')
+        # base row (no trailing comma)
+        f.write('\tfile << walk_id << "," << i << "," << attempt << "," << status << "," << target')
+        # append each Pm field, prefixed by comma, no extra spaces
+        for pname in param_list:
+            f.write(f' << "," << h_pm.{pname}')
+        f.write(' << "\\n";\n')
         f.write("}\n\n")
 
 
