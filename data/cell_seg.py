@@ -29,7 +29,7 @@ LMK_PTH = "deep_adults_sorted_BT_16-11-25.csv"
 FISH_ID = 6  # ID of fish to analyse 0-9
 STAGE = 15  # 0-21
 R_RAD = 0.085  # radius for neighbour counts within radius (mm)
-A_RAD = 0.5  # inner radius for annulus neighbour counts (mm)
+A_RAD = 0.3  # inner radius for annulus neighbour counts (mm)
 A_DELTA = 0.025  # width of annulus for annulus neighbour counts (mm)
 EXPORT = False  # whether to export plots
 
@@ -141,6 +141,13 @@ class Fin:
         cent[:, 0] *= -1  # invert y-axis
         return cent[:, ::-1]  # convert (row, col) to (x, y)
 
+    def show_fin(self):
+        """Display the fin image."""
+        original_img = cv2.imread(self.img_pth)
+        plt.imshow(original_img)
+        plt.title(f"Fin Image: {self.hfile}")
+        plt.show()
+
     def plot_probs(self):
         """Plot the raw probability map."""
         plt.imshow(self.array[:, :, 1], cmap="gray_r")
@@ -153,12 +160,14 @@ class Fin:
         # original_img = plt.imread(os.path.join(self.wd, self.img_file))
         original_img = cv2.imread(self.img_pth)
         img_overlay = label2rgb(
-            self.arr_lab, image=original_img, bg_label=0)
-
+            self.arr_lab, image=original_img, bg_label=0, alpha=1, bg_color=None)
+        fig = plt.figure(figsize=(16, 8))
         # plt.imshow(original_img, alpha=0.5)
         plt.imshow(img_overlay)
         plt.title(f"Segmented Regions: {self.hfile}")
         plt.show()
+
+        return fig
 
     def delaunay(self):
         """Compute Delaunay triangulation of centroids."""
@@ -211,8 +220,9 @@ class Fin:
 
         img = plt.imread(self.img_pth)
         extent = [0, img.shape[1]/self.sb_len, -img.shape[0]/self.sb_len, 0]
-
+        showlocal = False
         if fig is None or axs is None:
+            showlocal = True
             fig, axs = plt.subplots(ncols=1, nrows=2, figsize=(8, 8),
                                     layout="constrained",
                                     sharex=True, sharey=True)
@@ -241,7 +251,7 @@ class Fin:
         axs[0].add_patch(r)
         axs[1].add_patch(a)
 
-        if fig is None or axs is None:
+        if showlocal:
             plt.show()
         else:
             return fig, axs, scs, cbs
@@ -305,8 +315,8 @@ class DelaunayTri():
 class KNNGraph():
     """k-nearest neighbor graph of points."""
 
-    def __init__(self, points: np.ndarray, sb_len: float, k: int, hfile: str = None,
-                 img_pth: str = None):
+    def __init__(self, points: np.ndarray, sb_len: float, k: int,
+                 hfile: str = None, img_pth: str = None):
         self.points = points
         self.sb_len = sb_len if not np.isnan(sb_len) else 1
         self.k = k
@@ -420,14 +430,16 @@ class nb_counts_animation():
 
         self.ax[0].set_title(fin.hfile + "\n" +
                              rf"$N_\beta = s < {R_RAD}$ (mm)")
-        self.ax[1].set_title(fin.hfile + "\n" +
-                             rf"$N_\gamma = {A_RAD} < s < {A_RAD + A_DELTA}$ (mm)")
+        self.ax[1].set_title(
+            fin.hfile + "\n" +
+            rf"$N_\gamma = {A_RAD} < s < {A_RAD + A_DELTA}$ (mm)")
 
         # pass
 
     def animate(self):
-        ani = FuncAnimation(self.fig, self.update, frames=range(len(self.fish_dat)),
-                            init_func=self.init, blit=False, interval=500, repeat=False)
+        ani = FuncAnimation(
+            self.fig, self.update, frames=range(len(self.fish_dat)),
+            init_func=self.init, blit=False, interval=500, repeat=False)
         ani.save(f"nb_counts_fish{self.fish_id}.mp4", dpi=300)
         # plt.show()
 
@@ -462,7 +474,7 @@ def nb_counts_all(region: int = 0):
             print(f"Skipping {fin.hfile} due to missing scale bar.")
             continue
         sc = axs[i].scatter(fin.centroids()[:, 0], fin.centroids()[:, 1],
-                            c=counts[i], cmap="viridis", s=2,
+                            c=counts[i], cmap="viridis", s=0.2,
                             vmin=0, vmax=vmax)
         axs[i].set_title(f"{fin.fish_id}_{fin.date}")
         axs[i].set_aspect("equal")
@@ -480,7 +492,10 @@ def nb_counts_all(region: int = 0):
     fig.colorbar(sc, ax=axs.ravel().tolist(), label=lab,
                  shrink=0.25, location="bottom")
     fig.suptitle(WD)
-    plt.show()
+    # plt.show()
+    reg = f"r{R_RAD}" if region == 0 else f"a{A_RAD}-{A_RAD + A_DELTA}"
+    seg_run = "dense" if "dense" in WD else "loose"
+    plt.savefig(f"nb_counts_all_DA-{1+FISH_ID}_{reg}_{seg_run}.png", dpi=300)
 
 
 def print_help():
@@ -496,6 +511,7 @@ def print_help():
                         1 ... Plot Delaunay triangulation for one fin
                         2 ... Plot neighbour counts for one fin
                         3 ... Plot probability map for one fin
+                        4 ... Plot segmentation for one fin
                         5 ... Animate neighbour counts over stages for one fish
                         6 ... Plot neighbour counts for all fins of one fish
     """
@@ -549,15 +565,17 @@ if __name__ == "__main__":
             seg.fins[idx].plot_probs()
         elif FUNC == 4:
             seg = Cell_seg(WD)
-            idx = seg.metadata[seg.metadata["id"] ==
-                               f"DA-{1+FISH_ID}"]
-            idx = idx[idx["stage"] == STAGE]
-            idx = idx.index[0]
-            seg.fins[idx].plot_seg()
+            fish_dat = seg.metadata[seg.metadata["id"] ==
+                                    f"DA-{1+FISH_ID}"]
+            fish_dat = fish_dat[fish_dat["stage"] == STAGE]
+            idx = fish_dat.index[0]
+            date = fish_dat.iloc[0]["date"].strftime("%Y-%m-%d")
+            fig = seg.fins[idx].plot_seg()
+            fig.savefig(f"DA-{1+FISH_ID}_{date}_seg.svg", dpi=300)
         elif FUNC == 5:
             ani = nb_counts_animation(WD, FISH_ID)
             ani.animate()
         elif FUNC == 6:
-            nb_counts_all()
+            nb_counts_all(region=1)
     else:
         print_help()
