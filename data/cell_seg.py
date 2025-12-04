@@ -37,7 +37,7 @@ EXPORT = False  # whether to export plots
 # plt.style.use("../misc/stylesheet.mplstyle")
 
 
-class Cell_seg:  # short for segmentation
+class CellSeg:  # short for segmentation
     """Class for handling multiple fin segmentations in a directory."""
 
     def __init__(self, wd):
@@ -60,12 +60,12 @@ class Cell_seg:  # short for segmentation
         for hfile in self.hfiles:
             img_file = hfile.replace("_Probabilities.h5", ".tiff")
             fish_id = hfile.split("_")[0]
-            date = hfile.split("_")[1]
+            dt = hfile.split("_")[1]
             # stage = int(hfile.split("_")[2])
-            type = "probs" if "Probab" in hfile else "simple"
+            tp = "probs" if "Probab" in hfile else "simple"
             df.append({"file": hfile, "img": img_file, "id": fish_id,
-                       "date": date,  # "stage": stage,
-                       "type": type})
+                       "date": dt,  # "stage": stage,
+                       "type": tp})
 
         df = pd.DataFrame(df)
         df["date"] = pd.to_datetime(df["date"])  # , format="%d-%m")
@@ -85,8 +85,8 @@ class Cell_seg:  # short for segmentation
                                   (self.lmks["idx"] == stage) &
                                   (self.lmks["type"] == "s")]
             if lmks_fish.empty:
-                print(
-                    f"Warning: No scale bar landmarks for {fish_id} stage {stage}")
+                print("Warning: No scale bar landmarks for"
+                      + f" {fish_id} stage {stage}")
                 sb_len = np.nan
             else:
                 p0 = lmks_fish.iloc[0][["x", "y"]].to_numpy(dtype=float)
@@ -160,7 +160,8 @@ class Fin:
         # original_img = plt.imread(os.path.join(self.wd, self.img_file))
         original_img = cv2.imread(self.img_pth)
         img_overlay = label2rgb(
-            self.arr_lab, image=original_img, bg_label=0, alpha=1, bg_color=None)
+            self.arr_lab, image=original_img, bg_label=0, alpha=1,
+            bg_color=None)
         fig = plt.figure(figsize=(16, 8))
         # plt.imshow(original_img, alpha=0.5)
         plt.imshow(img_overlay)
@@ -344,24 +345,24 @@ class KNNGraph():
 
     def compute_nx_graph(self):
         """Compute NetworkX graph from k-nearest neighbor edges."""
-        G = nx.Graph()
-        G.add_edges_from((edge[0], edge[1], {
+        g = nx.Graph()
+        g.add_edges_from((edge[0], edge[1], {
                          'dist': self.unique_distances[i]}
         ) for i, edge in enumerate(self.edges))
-        connected = list(nx.connected_components(G))
-        return G, connected
+        connected = list(nx.connected_components(g))
+        return g, connected
 
     def plot(self):
         """Plot the k-nearest neighbor graph."""
         fig, ax = plt.subplots(figsize=(10, 5), layout="constrained")
-        G, connected = self.compute_nx_graph()
+        g, connected = self.compute_nx_graph()
         connected.sort(key=len, reverse=True)  # sort components by size
         pos = {i: self.points[i] for i in range(len(self.points))}
         colors = plt.get_cmap('tab10', len(connected))
 
         av_dists = []
         for i, component in enumerate(connected):
-            subgraph = G.subgraph(component)
+            subgraph = g.subgraph(component)
             # compute the total distance of edges in subgraph / total no. edges
             av_dist = subgraph.size(weight="dist") / subgraph.number_of_edges()
             av_dists.append(av_dist)
@@ -387,13 +388,13 @@ class KNNGraph():
         return fig, ax
 
 
-class nb_counts_animation():
+class NbCountMov():
     """Animate neighbour counts over stages for a given fish ID."""
 
     def __init__(self, wd, fish_id: int):
         self.wd = wd
         self.fish_id = fish_id
-        self.seg = Cell_seg(wd)
+        self.seg = CellSeg(wd)
         self.fish_dat = self.seg.metadata[self.seg.metadata["id"]
                                           == f"DA-{1+fish_id}"]
         self.fig, self.ax = plt.subplots(ncols=1, nrows=2, figsize=(8, 8),
@@ -403,10 +404,13 @@ class nb_counts_animation():
         self.cbs = []
 
     def init(self):
-        self.fig, self.ax, self.scs, self.cbs = self.seg.fins[0].plot_nb_counts(
-            fig=self.fig, axs=self.ax)
+        """Initialise first animation frame"""
+        self.fig, self.ax, self.scs, self.cbs = (
+            self.seg.fins[0].plot_nb_counts(
+                fig=self.fig, axs=self.ax))
 
     def update(self, frame):
+        """Update animation frame"""
         # stage = self.fish_dat.iloc[frame]["stage"]
         fin = self.seg.fins[frame]
         img = plt.imread(fin.img_pth)
@@ -437,6 +441,9 @@ class nb_counts_animation():
         # pass
 
     def animate(self):
+        """
+        Animate and save neighbour counts over stages for a given fish ID.
+        """
         ani = FuncAnimation(
             self.fig, self.update, frames=range(len(self.fish_dat)),
             init_func=self.init, blit=False, interval=500, repeat=False)
@@ -449,7 +456,7 @@ def nb_counts_all(region: int = 0):
     0 ... within radius
     1 ... within annulus"""
 
-    seg = Cell_seg(WD)
+    seg = CellSeg(WD)
     fish_dat = seg.metadata[seg.metadata["id"] ==
                             f"DA-{1+FISH_ID}"]
     # idx = idx[idx["stage"] == STAGE]
@@ -530,7 +537,7 @@ if __name__ == "__main__":
     if "-f" in args:
         FUNC = int(args[args.index("-f") + 1])
         if FUNC == 0:
-            seg = Cell_seg(WD)
+            seg = CellSeg(WD)
             fish_dat = seg.metadata[seg.metadata["id"] ==
                                     f"DA-{1+FISH_ID}"]
             fish_dat = fish_dat[fish_dat["stage"] == STAGE]
@@ -540,7 +547,7 @@ if __name__ == "__main__":
 
             fig.savefig(f"DA-{1+FISH_ID}_{date}_knn.svg")
         elif FUNC == 1:
-            seg = Cell_seg(WD)
+            seg = CellSeg(WD)
             fish_dat = seg.metadata[seg.metadata["id"] ==
                                     f"DA-{1+FISH_ID}"]
             fish_dat = fish_dat[fish_dat["stage"] == STAGE]
@@ -549,7 +556,7 @@ if __name__ == "__main__":
             fig, _ = seg.fins[idx].delaunay().plot()
             fig.savefig(f"DA-{1+FISH_ID}_{date}_delaunay.svg")
         elif FUNC == 2:
-            seg = Cell_seg(WD)
+            seg = CellSeg(WD)
             print(seg.metadata)
             idx = seg.metadata[seg.metadata["id"] ==
                                f"DA-{1+FISH_ID}"]
@@ -557,14 +564,14 @@ if __name__ == "__main__":
             idx = idx.index[0]
             seg.fins[idx].plot_nb_counts()
         elif FUNC == 3:
-            seg = Cell_seg(WD)
+            seg = CellSeg(WD)
             fish_dat = seg.metadata[seg.metadata["id"] ==
                                     f"DA-{1+FISH_ID}"]
             fish_dat = fish_dat[fish_dat["stage"] == STAGE]
             idx = fish_dat.index[0]
             seg.fins[idx].plot_probs()
         elif FUNC == 4:
-            seg = Cell_seg(WD)
+            seg = CellSeg(WD)
             fish_dat = seg.metadata[seg.metadata["id"] ==
                                     f"DA-{1+FISH_ID}"]
             fish_dat = fish_dat[fish_dat["stage"] == STAGE]
@@ -573,7 +580,7 @@ if __name__ == "__main__":
             fig = seg.fins[idx].plot_seg()
             fig.savefig(f"DA-{1+FISH_ID}_{date}_seg.svg", dpi=300)
         elif FUNC == 5:
-            ani = nb_counts_animation(WD, FISH_ID)
+            ani = NbCountMov(WD, FISH_ID)
             ani.animate()
         elif FUNC == 6:
             nb_counts_all(region=1)
