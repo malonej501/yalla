@@ -321,27 +321,35 @@ class KNNGraph():
         self.points = points
         self.sb_len = sb_len if not np.isnan(sb_len) else 1
         self.k = k
-        self.edges, self.distances = self.compute_knn()
-        self.unique_distances = [
-            np.linalg.norm(self.points[i] - self.points[j])
-            for i, j in self.edges]
+        self.edges, self.unique_distances = self.compute_knn()
+        # self.unique_distances = [
+        #     np.linalg.norm(self.points[i] - self.points[j])
+        #     for i, j in self.edges]
         self.hfile = hfile
         self.img_pth = img_pth
-        self.av_dist = np.mean(self.distances[:, 1:])  # exclude self-distance
 
     def compute_knn(self):
         """Compute k-nearest neighbor edges."""
         nbrs = NearestNeighbors(n_neighbors=self.k).fit(self.points)
         distances, indices = nbrs.kneighbors(self.points, return_distance=True)
-        # Build adjacency list
-        edges = []
-        for i, neighbors in enumerate(indices):
-            for j in neighbors[1:]:
-                if i != j:  # skip self-loops
-                    edges.append((i, j))
 
-        print(distances)
-        return edges, distances
+        # build ordered undirected edge list with a single distance
+        # per unique edge
+        edges_set = set()
+        unique_edges = []
+        unique_distances = []
+        for i, (nbr_idxs, nbr_dists) in enumerate(zip(indices, distances)):
+            for j_idx, d in zip(nbr_idxs[1:], nbr_dists[1:]):
+                # skip self-loops and duplicates
+                if i == j_idx:
+                    continue
+                a, b = (i, j_idx) if i < j_idx else (j_idx, i)
+                if (a, b) not in edges_set:
+                    edges_set.add((a, b))
+                    unique_edges.append((int(a), int(b)))
+                    unique_distances.append(float(d))
+
+        return unique_edges, unique_distances
 
     def compute_nx_graph(self):
         """Compute NetworkX graph from k-nearest neighbor edges."""
@@ -386,6 +394,26 @@ class KNNGraph():
         plt.show()
 
         return fig, ax
+
+    def plot_edge_length_hist(self):
+        """Plot histogram of k-NN edge lengths."""
+        print(len(self.unique_distances))
+        print(len(self.edges))
+        print(len(self.points))
+        plt.hist(self.unique_distances, bins=200)
+        med_dist = np.median(self.unique_distances)
+        plt.axvline(med_dist, color="C1", ls="--",
+                    label=f"Med. edge length: {med_dist:.3f} mm")
+        plt.xlabel("Edge length (mm)")
+        plt.ylabel("Frequency")
+        plt.yscale("log")
+        plt.grid(alpha=0.3)
+        plt.title(f"k-NN Edge Lengths (k={self.k})\n{self.hfile}")
+        plt.text(0.95, 0.8, f"No. unique edges: {len(self.edges)}\n" +
+                 f"No. points: {len(self.points)}",
+                 transform=plt.gca().transAxes, ha="right")
+        plt.legend()
+        plt.show()
 
 
 class NbCountMov():
@@ -521,6 +549,7 @@ def print_help():
                         4 ... Plot segmentation for one fin
                         5 ... Animate neighbour counts over stages for one fish
                         6 ... Plot neighbour counts for all fins of one fish
+                        7 ... Plot k-NN edge length histogram for one fin
     """
     print(help_text)
     sys.exit()
@@ -584,5 +613,12 @@ if __name__ == "__main__":
             ani.animate()
         elif FUNC == 6:
             nb_counts_all(region=1)
+        elif FUNC == 7:
+            seg = CellSeg(WD)
+            fish_dat = seg.metadata[seg.metadata["id"] ==
+                                    f"DA-{1+FISH_ID}"]
+            fish_dat = fish_dat[fish_dat["stage"] == STAGE]
+            idx = fish_dat.index[0]
+            seg.fins[idx].knn_graph().plot_edge_length_hist()
     else:
         print_help()
