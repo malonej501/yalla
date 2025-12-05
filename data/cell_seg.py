@@ -29,15 +29,16 @@ LMK_PTH = "deep_adults_sorted_BT_16-11-25.csv"
 FISH_ID = 6  # ID of fish to analyse 0-9
 STAGE = 15  # 0-21
 R_RAD = 0.085  # radius for neighbour counts within radius (mm)
-A_RAD = 0.5  # inner radius for annulus neighbour counts (mm)
+A_RAD = 0.3  # inner radius for annulus neighbour counts (mm)
 A_DELTA = 0.025  # width of annulus for annulus neighbour counts (mm)
+REG = 0  # region type for neighbour counts all: 0=radius, 1=annulus
 EXPORT = False  # whether to export plots
 
 # matplotlib.use("pgf")
 # plt.style.use("../misc/stylesheet.mplstyle")
 
 
-class Cell_seg:  # short for segmentation
+class CellSeg:  # short for segmentation
     """Class for handling multiple fin segmentations in a directory."""
 
     def __init__(self, wd):
@@ -60,12 +61,12 @@ class Cell_seg:  # short for segmentation
         for hfile in self.hfiles:
             img_file = hfile.replace("_Probabilities.h5", ".tiff")
             fish_id = hfile.split("_")[0]
-            date = hfile.split("_")[1]
+            dt = hfile.split("_")[1]
             # stage = int(hfile.split("_")[2])
-            type = "probs" if "Probab" in hfile else "simple"
+            tp = "probs" if "Probab" in hfile else "simple"
             df.append({"file": hfile, "img": img_file, "id": fish_id,
-                       "date": date,  # "stage": stage,
-                       "type": type})
+                       "date": dt,  # "stage": stage,
+                       "type": tp})
 
         df = pd.DataFrame(df)
         df["date"] = pd.to_datetime(df["date"])  # , format="%d-%m")
@@ -85,8 +86,8 @@ class Cell_seg:  # short for segmentation
                                   (self.lmks["idx"] == stage) &
                                   (self.lmks["type"] == "s")]
             if lmks_fish.empty:
-                print(
-                    f"Warning: No scale bar landmarks for {fish_id} stage {stage}")
+                print("Warning: No scale bar landmarks for"
+                      + f" {fish_id} stage {stage}")
                 sb_len = np.nan
             else:
                 p0 = lmks_fish.iloc[0][["x", "y"]].to_numpy(dtype=float)
@@ -141,6 +142,13 @@ class Fin:
         cent[:, 0] *= -1  # invert y-axis
         return cent[:, ::-1]  # convert (row, col) to (x, y)
 
+    def show_fin(self):
+        """Display the fin image."""
+        original_img = cv2.imread(self.img_pth)
+        plt.imshow(original_img)
+        plt.title(f"Fin Image: {self.hfile}")
+        plt.show()
+
     def plot_probs(self):
         """Plot the raw probability map."""
         plt.imshow(self.array[:, :, 1], cmap="gray_r")
@@ -153,12 +161,15 @@ class Fin:
         # original_img = plt.imread(os.path.join(self.wd, self.img_file))
         original_img = cv2.imread(self.img_pth)
         img_overlay = label2rgb(
-            self.arr_lab, image=original_img, bg_label=0)
-
+            self.arr_lab, image=original_img, bg_label=0, alpha=1,
+            bg_color=None)
+        fig = plt.figure(figsize=(16, 8))
         # plt.imshow(original_img, alpha=0.5)
         plt.imshow(img_overlay)
         plt.title(f"Segmented Regions: {self.hfile}")
         plt.show()
+
+        return fig
 
     def delaunay(self):
         """Compute Delaunay triangulation of centroids."""
@@ -211,8 +222,9 @@ class Fin:
 
         img = plt.imread(self.img_pth)
         extent = [0, img.shape[1]/self.sb_len, -img.shape[0]/self.sb_len, 0]
-
+        showlocal = False
         if fig is None or axs is None:
+            showlocal = True
             fig, axs = plt.subplots(ncols=1, nrows=2, figsize=(8, 8),
                                     layout="constrained",
                                     sharex=True, sharey=True)
@@ -241,7 +253,7 @@ class Fin:
         axs[0].add_patch(r)
         axs[1].add_patch(a)
 
-        if fig is None or axs is None:
+        if showlocal:
             plt.show()
         else:
             return fig, axs, scs, cbs
@@ -305,53 +317,61 @@ class DelaunayTri():
 class KNNGraph():
     """k-nearest neighbor graph of points."""
 
-    def __init__(self, points: np.ndarray, sb_len: float, k: int, hfile: str = None,
-                 img_pth: str = None):
+    def __init__(self, points: np.ndarray, sb_len: float, k: int,
+                 hfile: str = None, img_pth: str = None):
         self.points = points
         self.sb_len = sb_len if not np.isnan(sb_len) else 1
         self.k = k
-        self.edges, self.distances = self.compute_knn()
-        self.unique_distances = [
-            np.linalg.norm(self.points[i] - self.points[j])
-            for i, j in self.edges]
+        self.edges, self.unique_distances = self.compute_knn()
+        # self.unique_distances = [
+        #     np.linalg.norm(self.points[i] - self.points[j])
+        #     for i, j in self.edges]
         self.hfile = hfile
         self.img_pth = img_pth
-        self.av_dist = np.mean(self.distances[:, 1:])  # exclude self-distance
 
     def compute_knn(self):
         """Compute k-nearest neighbor edges."""
         nbrs = NearestNeighbors(n_neighbors=self.k).fit(self.points)
         distances, indices = nbrs.kneighbors(self.points, return_distance=True)
-        # Build adjacency list
-        edges = []
-        for i, neighbors in enumerate(indices):
-            for j in neighbors[1:]:
-                if i != j:  # skip self-loops
-                    edges.append((i, j))
 
-        print(distances)
-        return edges, distances
+        # build ordered undirected edge list with a single distance
+        # per unique edge
+        edges_set = set()
+        unique_edges = []
+        unique_distances = []
+        for i, (nbr_idxs, nbr_dists) in enumerate(zip(indices, distances)):
+            for j_idx, d in zip(nbr_idxs[1:], nbr_dists[1:]):
+                # skip self-loops and duplicates
+                if i == j_idx:
+                    continue
+                a, b = (i, j_idx) if i < j_idx else (j_idx, i)
+                if (a, b) not in edges_set:
+                    edges_set.add((a, b))
+                    unique_edges.append((int(a), int(b)))
+                    unique_distances.append(float(d))
+
+        return unique_edges, unique_distances
 
     def compute_nx_graph(self):
         """Compute NetworkX graph from k-nearest neighbor edges."""
-        G = nx.Graph()
-        G.add_edges_from((edge[0], edge[1], {
+        g = nx.Graph()
+        g.add_edges_from((edge[0], edge[1], {
                          'dist': self.unique_distances[i]}
         ) for i, edge in enumerate(self.edges))
-        connected = list(nx.connected_components(G))
-        return G, connected
+        connected = list(nx.connected_components(g))
+        return g, connected
 
     def plot(self):
         """Plot the k-nearest neighbor graph."""
         fig, ax = plt.subplots(figsize=(10, 5), layout="constrained")
-        G, connected = self.compute_nx_graph()
+        g, connected = self.compute_nx_graph()
         connected.sort(key=len, reverse=True)  # sort components by size
         pos = {i: self.points[i] for i in range(len(self.points))}
         colors = plt.get_cmap('tab10', len(connected))
 
         av_dists = []
         for i, component in enumerate(connected):
-            subgraph = G.subgraph(component)
+            subgraph = g.subgraph(component)
             # compute the total distance of edges in subgraph / total no. edges
             av_dist = subgraph.size(weight="dist") / subgraph.number_of_edges()
             av_dists.append(av_dist)
@@ -376,14 +396,34 @@ class KNNGraph():
 
         return fig, ax
 
+    def plot_edge_length_hist(self):
+        """Plot histogram of k-NN edge lengths."""
+        print(len(self.unique_distances))
+        print(len(self.edges))
+        print(len(self.points))
+        plt.hist(self.unique_distances, bins=200)
+        med_dist = np.median(self.unique_distances)
+        plt.axvline(med_dist, color="C1", ls="--",
+                    label=f"Med. edge length: {med_dist:.3f} mm")
+        plt.xlabel("Edge length (mm)")
+        plt.ylabel("Frequency")
+        plt.yscale("log")
+        plt.grid(alpha=0.3)
+        plt.title(f"k-NN Edge Lengths (k={self.k})\n{self.hfile}")
+        plt.text(0.95, 0.8, f"No. unique edges: {len(self.edges)}\n" +
+                 f"No. points: {len(self.points)}",
+                 transform=plt.gca().transAxes, ha="right")
+        plt.legend()
+        plt.show()
 
-class nb_counts_animation():
+
+class NbCountMov():
     """Animate neighbour counts over stages for a given fish ID."""
 
     def __init__(self, wd, fish_id: int):
         self.wd = wd
         self.fish_id = fish_id
-        self.seg = Cell_seg(wd)
+        self.seg = CellSeg(wd)
         self.fish_dat = self.seg.metadata[self.seg.metadata["id"]
                                           == f"DA-{1+fish_id}"]
         self.fig, self.ax = plt.subplots(ncols=1, nrows=2, figsize=(8, 8),
@@ -393,10 +433,13 @@ class nb_counts_animation():
         self.cbs = []
 
     def init(self):
-        self.fig, self.ax, self.scs, self.cbs = self.seg.fins[0].plot_nb_counts(
-            fig=self.fig, axs=self.ax)
+        """Initialise first animation frame"""
+        self.fig, self.ax, self.scs, self.cbs = (
+            self.seg.fins[0].plot_nb_counts(
+                fig=self.fig, axs=self.ax))
 
     def update(self, frame):
+        """Update animation frame"""
         # stage = self.fish_dat.iloc[frame]["stage"]
         fin = self.seg.fins[frame]
         img = plt.imread(fin.img_pth)
@@ -420,14 +463,19 @@ class nb_counts_animation():
 
         self.ax[0].set_title(fin.hfile + "\n" +
                              rf"$N_\beta = s < {R_RAD}$ (mm)")
-        self.ax[1].set_title(fin.hfile + "\n" +
-                             rf"$N_\gamma = {A_RAD} < s < {A_RAD + A_DELTA}$ (mm)")
+        self.ax[1].set_title(
+            fin.hfile + "\n" +
+            rf"$N_\gamma = {A_RAD} < s < {A_RAD + A_DELTA}$ (mm)")
 
         # pass
 
     def animate(self):
-        ani = FuncAnimation(self.fig, self.update, frames=range(len(self.fish_dat)),
-                            init_func=self.init, blit=False, interval=500, repeat=False)
+        """
+        Animate and save neighbour counts over stages for a given fish ID.
+        """
+        ani = FuncAnimation(
+            self.fig, self.update, frames=range(len(self.fish_dat)),
+            init_func=self.init, blit=False, interval=500, repeat=False)
         ani.save(f"nb_counts_fish{self.fish_id}.mp4", dpi=300)
         # plt.show()
 
@@ -437,7 +485,7 @@ def nb_counts_all(region: int = 0):
     0 ... within radius
     1 ... within annulus"""
 
-    seg = Cell_seg(WD)
+    seg = CellSeg(WD)
     fish_dat = seg.metadata[seg.metadata["id"] ==
                             f"DA-{1+FISH_ID}"]
     # idx = idx[idx["stage"] == STAGE]
@@ -452,7 +500,12 @@ def nb_counts_all(region: int = 0):
     counts = []
     for _, row in fish_dat.iterrows():
         fin = seg.fins[row.name]
-        counts.append(fin.counts_within_radius(R_RAD))
+        if region == 0:
+            counts.append(fin.counts_within_radius(R_RAD))
+            lab = f"N within radius {R_RAD} mm"
+        else:
+            counts.append(fin.counts_within_annulus(A_RAD, A_DELTA))
+            lab = f"N within annulus {A_RAD}-{A_RAD + A_DELTA} mm"
     all_counts = np.concatenate(counts)
     vmax = all_counts.max()
     axs = axs.flatten()
@@ -462,7 +515,7 @@ def nb_counts_all(region: int = 0):
             print(f"Skipping {fin.hfile} due to missing scale bar.")
             continue
         sc = axs[i].scatter(fin.centroids()[:, 0], fin.centroids()[:, 1],
-                            c=counts[i], cmap="viridis", s=2,
+                            c=counts[i], cmap="viridis", s=0.2,
                             vmin=0, vmax=vmax)
         axs[i].set_title(f"{fin.fish_id}_{fin.date}")
         axs[i].set_aspect("equal")
@@ -473,14 +526,15 @@ def nb_counts_all(region: int = 0):
 
     for ax in axs[i+1:]:
         ax.axis("off")
-    if region == 0:
-        lab = f"N within radius {R_RAD} mm"
-    else:
-        lab = f"N within annulus {A_RAD}-{A_RAD + A_DELTA} mm"
+
     fig.colorbar(sc, ax=axs.ravel().tolist(), label=lab,
                  shrink=0.25, location="bottom")
     fig.suptitle(WD)
-    plt.show()
+    # plt.show()
+    reg = f"r{R_RAD}" if region == 0 else f"a{A_RAD}-{A_RAD + A_DELTA}"
+    seg_run = "dense" if "dense" in WD else "loose"
+    plt.savefig(f"nb_counts_all_DA-{1+FISH_ID}_{reg}_{seg_run}.png", dpi=300)
+    print(f"Saved to nb_counts_all_DA-{1+FISH_ID}_{reg}_{seg_run}.png")
 
 
 def print_help():
@@ -491,13 +545,18 @@ def print_help():
     Options:
         -h              Show this help message and exit
         -d [directory]  Specify working directory
+        -r [region]     Specify region type for neighbour counts all
+                        0 ... radius
+                        1 ... annulus
         -f [function]   Specify function to run
                         0 ... Plot k-NN graph for one fin
                         1 ... Plot Delaunay triangulation for one fin
                         2 ... Plot neighbour counts for one fin
                         3 ... Plot probability map for one fin
+                        4 ... Plot segmentation for one fin
                         5 ... Animate neighbour counts over stages for one fish
                         6 ... Plot neighbour counts for all fins of one fish
+                        7 ... Plot k-NN edge length histogram for one fin
     """
     print(help_text)
     sys.exit()
@@ -509,12 +568,14 @@ if __name__ == "__main__":
         print_help()
     if "-d" in args:
         WD = args[args.index("-d") + 1].rstrip("/")
+    if "-r" in args:
+        REG = int(args[args.index("-r") + 1])
     if "-e" in args:
         EXPORT
     if "-f" in args:
         FUNC = int(args[args.index("-f") + 1])
         if FUNC == 0:
-            seg = Cell_seg(WD)
+            seg = CellSeg(WD)
             fish_dat = seg.metadata[seg.metadata["id"] ==
                                     f"DA-{1+FISH_ID}"]
             fish_dat = fish_dat[fish_dat["stage"] == STAGE]
@@ -524,7 +585,7 @@ if __name__ == "__main__":
 
             fig.savefig(f"DA-{1+FISH_ID}_{date}_knn.svg")
         elif FUNC == 1:
-            seg = Cell_seg(WD)
+            seg = CellSeg(WD)
             fish_dat = seg.metadata[seg.metadata["id"] ==
                                     f"DA-{1+FISH_ID}"]
             fish_dat = fish_dat[fish_dat["stage"] == STAGE]
@@ -533,7 +594,7 @@ if __name__ == "__main__":
             fig, _ = seg.fins[idx].delaunay().plot()
             fig.savefig(f"DA-{1+FISH_ID}_{date}_delaunay.svg")
         elif FUNC == 2:
-            seg = Cell_seg(WD)
+            seg = CellSeg(WD)
             print(seg.metadata)
             idx = seg.metadata[seg.metadata["id"] ==
                                f"DA-{1+FISH_ID}"]
@@ -541,23 +602,32 @@ if __name__ == "__main__":
             idx = idx.index[0]
             seg.fins[idx].plot_nb_counts()
         elif FUNC == 3:
-            seg = Cell_seg(WD)
+            seg = CellSeg(WD)
             fish_dat = seg.metadata[seg.metadata["id"] ==
                                     f"DA-{1+FISH_ID}"]
             fish_dat = fish_dat[fish_dat["stage"] == STAGE]
             idx = fish_dat.index[0]
             seg.fins[idx].plot_probs()
         elif FUNC == 4:
-            seg = Cell_seg(WD)
-            idx = seg.metadata[seg.metadata["id"] ==
-                               f"DA-{1+FISH_ID}"]
-            idx = idx[idx["stage"] == STAGE]
-            idx = idx.index[0]
-            seg.fins[idx].plot_seg()
+            seg = CellSeg(WD)
+            fish_dat = seg.metadata[seg.metadata["id"] ==
+                                    f"DA-{1+FISH_ID}"]
+            fish_dat = fish_dat[fish_dat["stage"] == STAGE]
+            idx = fish_dat.index[0]
+            date = fish_dat.iloc[0]["date"].strftime("%Y-%m-%d")
+            fig = seg.fins[idx].plot_seg()
+            fig.savefig(f"DA-{1+FISH_ID}_{date}_seg.svg", dpi=300)
         elif FUNC == 5:
-            ani = nb_counts_animation(WD, FISH_ID)
+            ani = NbCountMov(WD, FISH_ID)
             ani.animate()
         elif FUNC == 6:
-            nb_counts_all()
+            nb_counts_all(region=REG)
+        elif FUNC == 7:
+            seg = CellSeg(WD)
+            fish_dat = seg.metadata[seg.metadata["id"] ==
+                                    f"DA-{1+FISH_ID}"]
+            fish_dat = fish_dat[fish_dat["stage"] == STAGE]
+            idx = fish_dat.index[0]
+            seg.fins[idx].knn_graph().plot_edge_length_hist()
     else:
         print_help()
