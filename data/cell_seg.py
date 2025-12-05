@@ -31,6 +31,7 @@ STAGE = 15  # 0-21
 R_RAD = 0.085  # radius for neighbour counts within radius (mm)
 A_RAD = 0.3  # inner radius for annulus neighbour counts (mm)
 A_DELTA = 0.025  # width of annulus for annulus neighbour counts (mm)
+REG = 0  # region type for neighbour counts all: 0=radius, 1=annulus
 EXPORT = False  # whether to export plots
 
 # matplotlib.use("pgf")
@@ -499,7 +500,12 @@ def nb_counts_all(region: int = 0):
     counts = []
     for _, row in fish_dat.iterrows():
         fin = seg.fins[row.name]
-        counts.append(fin.counts_within_radius(R_RAD))
+        if region == 0:
+            counts.append(fin.counts_within_radius(R_RAD))
+            lab = f"N within radius {R_RAD} mm"
+        else:
+            counts.append(fin.counts_within_annulus(A_RAD, A_DELTA))
+            lab = f"N within annulus {A_RAD}-{A_RAD + A_DELTA} mm"
     all_counts = np.concatenate(counts)
     vmax = all_counts.max()
     axs = axs.flatten()
@@ -520,10 +526,7 @@ def nb_counts_all(region: int = 0):
 
     for ax in axs[i+1:]:
         ax.axis("off")
-    if region == 0:
-        lab = f"N within radius {R_RAD} mm"
-    else:
-        lab = f"N within annulus {A_RAD}-{A_RAD + A_DELTA} mm"
+
     fig.colorbar(sc, ax=axs.ravel().tolist(), label=lab,
                  shrink=0.25, location="bottom")
     fig.suptitle(WD)
@@ -531,6 +534,7 @@ def nb_counts_all(region: int = 0):
     reg = f"r{R_RAD}" if region == 0 else f"a{A_RAD}-{A_RAD + A_DELTA}"
     seg_run = "dense" if "dense" in WD else "loose"
     plt.savefig(f"nb_counts_all_DA-{1+FISH_ID}_{reg}_{seg_run}.png", dpi=300)
+    print(f"Saved to nb_counts_all_DA-{1+FISH_ID}_{reg}_{seg_run}.png")
 
 
 def print_help():
@@ -541,6 +545,9 @@ def print_help():
     Options:
         -h              Show this help message and exit
         -d [directory]  Specify working directory
+        -r [region]     Specify region type for neighbour counts all
+                        0 ... radius
+                        1 ... annulus
         -f [function]   Specify function to run
                         0 ... Plot k-NN graph for one fin
                         1 ... Plot Delaunay triangulation for one fin
@@ -561,6 +568,8 @@ if __name__ == "__main__":
         print_help()
     if "-d" in args:
         WD = args[args.index("-d") + 1].rstrip("/")
+    if "-r" in args:
+        REG = int(args[args.index("-r") + 1])
     if "-e" in args:
         EXPORT
     if "-f" in args:
@@ -612,7 +621,7 @@ if __name__ == "__main__":
             ani = NbCountMov(WD, FISH_ID)
             ani.animate()
         elif FUNC == 6:
-            nb_counts_all(region=1)
+            nb_counts_all(region=REG)
         elif FUNC == 7:
             seg = CellSeg(WD)
             fish_dat = seg.metadata[seg.metadata["id"] ==
