@@ -1,6 +1,7 @@
 # For analysing the output of ilastic cell segementations
 import os
 import sys
+import glob
 from matplotlib.animation import FuncAnimation
 import numpy as np
 import pandas as pd
@@ -25,7 +26,7 @@ PT_SIZE = 10  # point size for plotting centroids
 # WD = "adult_benthic_all_images"
 # WD = "adult_benthic_training_irid"
 WD = "deep_adults_sorted"
-LMK_PTH = "deep_adults_sorted_BT_16-11-25.csv"
+LMK_PTH = glob.glob(os.path.join(WD, "../lmks*.csv"))[0]
 FISH_ID = 6  # ID of fish to analyse 0-9
 STAGE = 15  # 0-21
 R_RAD = 0.085  # radius for neighbour counts within radius (mm)
@@ -491,6 +492,8 @@ def nb_counts_all(region: int = 0):
     # idx = idx[idx["stage"] == STAGE]
     # idx = idx.index[0]
     print(fish_dat)
+    if "_DR_" in WD:
+        plt.style.use("dark_background")
 
     fig, axs = plt.subplots(ncols=6, nrows=4, figsize=(16, 8),
                             layout="constrained",
@@ -515,8 +518,8 @@ def nb_counts_all(region: int = 0):
             print(f"Skipping {fin.hfile} due to missing scale bar.")
             continue
         sc = axs[i].scatter(fin.centroids()[:, 0], fin.centroids()[:, 1],
-                            c=counts[i], cmap="viridis", s=0.2,
-                            vmin=0, vmax=vmax)
+                            c=counts[i], cmap="viridis", s=1,
+                            vmin=0, vmax=vmax, ec="none")
         axs[i].set_title(f"{fin.fish_id}_{fin.date}")
         axs[i].set_aspect("equal")
         axs[i].grid(alpha=0.3)
@@ -533,8 +536,9 @@ def nb_counts_all(region: int = 0):
     # plt.show()
     reg = f"r{R_RAD}" if region == 0 else f"a{A_RAD}-{A_RAD + A_DELTA}"
     seg_run = "dense" if "dense" in WD else "loose"
-    plt.savefig(f"nb_counts_all_DA-{1+FISH_ID}_{reg}_{seg_run}.png", dpi=300)
-    print(f"Saved to nb_counts_all_DA-{1+FISH_ID}_{reg}_{seg_run}.png")
+    id = os.path.splitext(os.path.basename(WD))[0]
+    plt.savefig(f"nb_counts_all_DA-{1+FISH_ID}_{reg}_{id}.png", dpi=300)
+    print(f"Saved to nb_counts_all_DA-{1+FISH_ID}_{reg}_{id}.png")
 
 
 def print_help():
@@ -568,6 +572,9 @@ if __name__ == "__main__":
         print_help()
     if "-d" in args:
         WD = args[args.index("-d") + 1].rstrip("/")
+        LMK_PTH = glob.glob(os.path.join(
+            WD, "../lmks*.csv"))[0]  # update lmks path
+        print(LMK_PTH)
     if "-r" in args:
         REG = int(args[args.index("-r") + 1])
     if "-e" in args:
