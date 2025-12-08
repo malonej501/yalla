@@ -19,12 +19,12 @@ slow_switch,tissue_init,bool,true,different advection strength in slow region
 s_slow,tissue_init,float,0.4,x width of the slow region (as a fraction of total tissue height)
 s_layer,tissue_init,float,0.05, distance between cell layers along z axis (mm) see Hirata et al. (2003)
 t_grow_switch,tissue_grow,bool,true,fin growth switch
-t_growth_rate,tissue_grow,float,0.028,fin growth rate mm/day along proximal ap axis
+t_growth_rate,tissue_grow,float,0.028,fin growth rate mm/day along proximal ap axis default = 0.028
 mov_switch,migration,bool,true,cell movement switch
 diff_adh_rep,migration,bool,true,differential adhesion and repulsion switch
-rii,migration,float,0.04,I-I repulsion inflection point (mm)
+rii,migration,float,0.03,I-I repulsion inflection point (mm)
 Rii,migration,float,0.01,I-I max repulsion strength (mm/day)
-rxx,migration,float,0.05,Default repulsion inflection point (mm)
+rxx,migration,float,0.03,Default repulsion inflection point (mm)
 Rxx,migration,float,0.02,Default max repulsion strength (mm/day)   
 rix,migration,float,0.08,I-X repulsion inflection point (mm)
 Rix,migration,float,-0.05,I-X max repulsion strength (mm/day)
@@ -41,12 +41,16 @@ B_div,proliferation,float,0.7,division rate for T2/B cells
 r_A_birth,proliferation,float,0.000,chance of type 2 cells producing type 1 cells
 mech_thresh,proliferation,float,0.05,max mech_str under which cells can divide
 n_new_cells,proliferation,int,0,no. new cells added to staging area for each time step
-iil,proliferation,int,10,min no. i in local nbhd of i for division
-xid,proliferation,int,60,max no. x in annulus nbhd of i for division
+iil,proliferation,int,30,max no. i in local nbhd of i for division
+xid,proliferation,int,80,max no. x in annulus nbhd of i for division
 ixl,proliferation,int,6,min no. i in local nbhd of x for division
-xxd,proliferation,int,20,max no. x in annulus nbhd of x for division
+xxl,proliferation,int,30,max no. x in local nbhd of x for division
+qia,proliferation,float,0.002,prob i divides if all other conditions met
+qxa,proliferation,float,0.02,prob x divides if all other conditions met
 type_switch,switching,bool,true,switch cell types based on chemical amounts
 death_switch,death,bool,true,allow cells to die when conditions met
 q_death,death,float,0.03,probability of cell death if all other conditions are met
 xidd,death,int,30,min no. x in annulus nbhd of i for death
-ixdd,death,int,10,min no. i in annulus nbhd of x for death
+ixdd,death,int,15,min no. i in annulus nbhd of x for death
+qir,death,float,0.0025,prob i dies if all other conditions met
+qxr,death,float,0.005,prob x dies if all other conditions met
