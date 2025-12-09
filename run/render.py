@@ -47,9 +47,10 @@ def render_frame():
     # virtual display for offscreen rendering
     display = Display(visible=0, size=(1366, 768))
     display.start()
-    vtk = VTKS[-1]  if isinstance(VTKS, list) else VTKS # select final frame
+    vtk = VTKS[-1] if isinstance(VTKS, list) else VTKS  # select final frame
     cmap = "viridis"
-    points = Points(vtk).point_size(PT_SIZE * ZOOM).cmap(cmap, C_PROP)
+    points = Points(vtk).point_size(
+        PT_SIZE * ZOOM).cmap(cmap, C_PROP).alpha(PA)
     p = show(points, interactive=False)
     p.screenshot(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}.png")
     p.close()
@@ -262,6 +263,47 @@ def tissue_stats():
 
     stats_df = pd.DataFrame(stats)
     print(stats_df)
+
+
+def pattern_stats_frame():
+    """Cluster spot cells and infer alpha shapes and shape stats for a single
+    frame"""
+
+    vtk = VTKS[-1] if isinstance(VTKS, list) else VTKS  # select final frame
+
+    # return positions of spot cells
+    cell_types = vtk.pointdata["cell_type"]
+    mask = (cell_types == 1) | (cell_types == 3)
+    x_spots = vtk.vertices[mask]
+    db = DBSCAN(eps=EPS, min_samples=1).fit(x_spots)
+    labels = db.labels_
+    # Number of clusters in labels, ignoring noise if present.
+    unique_labels = set(labels)
+    n_clusters = len(unique_labels) - (1 if -1 in labels else 0)
+    n_noise = list(labels).count(-1)  # noisy points are given the label -1
+    print(f"n_clusters: {n_clusters}, n_noise_pts: {n_noise}")
+    core_samples_mask = np.zeros_like(labels, dtype=bool)
+    core_samples_mask[db.core_sample_indices_] = True
+
+    stats = []
+    for l in unique_labels:
+        class_member_mask = labels == l
+        xy = x_spots[class_member_mask & core_samples_mask]
+        xy = np.delete(xy, 2, axis=1)  # remove z dimension
+        ash = alphashape.alphashape(xy, alpha=15)
+        if ash.geom_type == "Polygon":
+            perimeter = shapely.length(ash)
+            roundness = (4 * math.pi * ash.area) / (perimeter**2)
+            stats.append({"label": l, "geom_type": ash.geom_type,
+                          "area": ash.area, "roundness": roundness})
+    if not stats:
+        print("No spot cell clusters found.")
+        stats.append({"label": None, "geom_type": None,
+                      "area": None, "roundness": None})
+    stats_df = pd.DataFrame(stats)
+    print(stats_df)
+
+    print(stats_df["area"].mean(), stats_df["roundness"].mean())
 
 
 def pattern_stats(fin=False, rays=False):
@@ -788,3 +830,6 @@ if __name__ == "__main__":
         elif FUNC == 2:
             VTKS = load(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_*.vtk")
             render_frame()
+        elif FUNC == 3:
+            VTKS = load(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_*.vtk")
+            pattern_stats_frame()
