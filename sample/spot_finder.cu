@@ -18,6 +18,8 @@ using namespace std;
 
 // Simulation hyperparameters
 
+const int sampler = 0; // 0 = metropolis-hastings, 1 = Latin hypercube
+
 // Random walk
 const float mut_mplr = 10;  // mutation multiplier
 const int n_steps = 1000;   // number of iterations in chain
@@ -207,126 +209,79 @@ string mutate_lh(Pm& h_pm)
 //     return t_pair.first;
 // }
 
-// int main(int argc, char const* argv[])
-// {
-//     string out_dir_name = "output";
-//     if (argc > 1) out_dir_name = string(argv[1]);
-//     int walk_id = 0;
-//     int attempt = 0;
-//     string status = "pass";
-//     Py_Initialize();
-
-//     ofstream report_file(  // begin report file
-//         "../run/" + out_dir_name + "/report_" + to_string(walk_id) + ".csv");
-//     write_report_header(report_file);
-
-//     for (int i = 0; i < n_steps; i++) {
-//         cout << "Step: " << i << endl;
-//         string target = mutate_lh(h_pm);  // select target and change
-//         tissue_sim(0, NULL, walk_id, i, true, out_dir_name);
-//         // check output
-        
-//         system(
-//             (". ../venv/bin/activate && python3 ../run/render.py " + 
-//                 out_dir_name + " -f 2 -w " + to_string(walk_id) + 
-//                 " -s " + to_string(i)).c_str());
-//         write_report_row(
-//             report_file, walk_id, i, attempt, status, target, h_pm);
-//         report_file.flush();  // flush the buffer
-//     }
-//     return 0;
-// }
-
-int main(int argc, char const* argv[])
-{
-    string out_dir_name = "output";
-    if (argc > 1) out_dir_name = string(argv[1]);
-    int walk_id = 0;
-    int attempt = 0;
-    string status = "pass";
-
-    // Set PythonHome to venv
+PyObject* init_python_module(const char* module_name, const char* func_name) {
     setenv("PYTHONPATH", "../venv/lib/python3.11/site-packages", 1);
-
-    // Load python interpreter for phenotyping
     Py_Initialize();
     PyRun_SimpleString("import sys; sys.path.append('../run')");
-    PyObject* pName = PyUnicode_FromString("render");
+    
+    PyObject* pName = PyUnicode_FromString(module_name);
     PyObject* pModule = PyImport_Import(pName);
     Py_DECREF(pName);
 
     if (!pModule) {
         PyErr_Print();
-        std::cerr << "Failed to load render module\n";
-        return 1;
+        std::cerr << "Failed to load " << module_name << " module\n";
+        return nullptr;
     }
 
-    // Get pattern_stats_frame function
-    PyObject* pStats = PyObject_GetAttrString(pModule, "pattern_stats_frame");
-    if (!pStats || !PyCallable_Check(pStats)) {
+    PyObject* pFunc = PyObject_GetAttrString(pModule, func_name);
+    if (!pFunc || !PyCallable_Check(pFunc)) {
         PyErr_Print();
-        std::cerr << "Cannot find function pattern_stats_frame\n";
-        Py_XDECREF(pStats);
+        std::cerr << "Cannot find function " << func_name << "\n";
+        Py_XDECREF(pFunc);
         Py_DECREF(pModule);
-        return 1;
+        return nullptr;
     }
 
-    ofstream report_file(  // begin report file
-        "../run/" + out_dir_name + "/report_" + to_string(walk_id) + ".csv");
+    Py_DECREF(pModule);  // keep only pFunc
+    return pFunc;
+}
+
+int main(int argc, char const* argv[])
+{
+    string out_dir_name = argc > 1 ? string(argv[1]) : "output";
+    int walk_id = 0, attempt = 0;
+    string status = "pass";
+
+    PyObject* pStats = init_python_module("render", "pattern_stats_frame");
+    if (!pStats) return 1;
+
+    ofstream report_file("../run/" + out_dir_name + "/report_" + to_string(walk_id) + ".csv");
     write_report_header(report_file);
 
     for (int i = 0; i < n_steps; i++) {
         cout << "Step: " << i << endl;
-        string target = mutate_lh(h_pm);  // select target and change
+        string target = mutate_lh(h_pm);
         tissue_sim(0, NULL, walk_id, i, true, out_dir_name);
 
-        // Declare metrics before the Python call
-        int n_clusters = 0;
-        double mean_area = 0.0;
-        double mean_roundness = 0.0;
-        
-        // Call pattern_stats_frame with the right arguments
-        // Assuming signature: pattern_stats_frame(folder, walk_id, step, )
         PyObject* pArgs = PyTuple_Pack(3,
             PyUnicode_FromString(out_dir_name.c_str()),
             PyLong_FromLong(walk_id),
-            PyLong_FromLong(i));  
+            PyLong_FromLong(i));
         
         PyObject* pResult = PyObject_CallObject(pStats, pArgs);
         Py_DECREF(pArgs);
 
-        
-        if (pResult) {
-            // Check if result is a tuple with 3 elements
-            if (PyTuple_Check(pResult) && PyTuple_Size(pResult) == 3) {
-                PyObject* pItem0 = PyTuple_GetItem(pResult, 0);  // borrowed ref
-                PyObject* pItem1 = PyTuple_GetItem(pResult, 1);  // borrowed ref
-                PyObject* pItem2 = PyTuple_GetItem(pResult, 2);  // borrowed ref
-                
-                n_clusters = PyLong_AsLong(pItem0);
-                mean_area = PyFloat_AsDouble(pItem1);
-                mean_roundness = PyFloat_AsDouble(pItem2);
-                
-                cout << "Pattern metrics: " << n_clusters << ", " << mean_area << ", " << mean_roundness << endl;
-                // Use mean_area, mean_roundness in your logic (store in report, etc.)
-            } else {
-                std::cerr << "Expected tuple of 2 floats from pattern_stats_frame\n";
-            }
-            Py_DECREF(pResult);
+        int n_clusters = 0;
+        double mean_area = 0.0, mean_roundness = 0.0;
+
+        if (pResult && PyTuple_Check(pResult) && PyTuple_Size(pResult) == 3) {
+            n_clusters = PyLong_AsLong(PyTuple_GetItem(pResult, 0));
+            mean_area = PyFloat_AsDouble(PyTuple_GetItem(pResult, 1));
+            mean_roundness = PyFloat_AsDouble(PyTuple_GetItem(pResult, 2));
+            cout << "Pattern metrics: " << n_clusters << ", " << mean_area << ", " << mean_roundness << endl;
         } else {
             PyErr_Print();
             std::cerr << "Python function call failed\n";
         }
-        
-        write_report_row(
-            report_file, walk_id, i, attempt, status, target, 
-            n_clusters, mean_area, mean_roundness, h_pm);
-        report_file.flush();  // flush the buffer
+        Py_XDECREF(pResult);
+
+        write_report_row(report_file, walk_id, i, attempt, status, target, 
+                         n_clusters, mean_area, mean_roundness, h_pm);
+        report_file.flush();
     }
 
-    // Cleanup
     Py_XDECREF(pStats);
-    Py_DECREF(pModule);
     Py_Finalize();
     return 0;
 }
