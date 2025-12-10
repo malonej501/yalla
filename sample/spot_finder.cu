@@ -6,6 +6,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <Python.h>
 
 #define COMPILE_AS_LIBRARY  // to avoid redefining main
 // #include "../examples/eggspot.cu"
@@ -38,19 +39,19 @@ struct Targets {
 };
 
 static constexpr std::array<Targets<int>, 6> lh_int_targets{
-    {{"iil", 1, 100, &Pm::iil}, 
-    {"xid", 1, 100, &Pm::xid},
-    {"ixl", 1, 100, &Pm::ixl}, 
-    {"xxl", 1, 100, &Pm::xxl},
-    {"xidd", 1, 100, &Pm::xidd}, 
-    {"ixdd", 1, 100, &Pm::ixdd}}
+    {{"iil", 10, 30, &Pm::iil}, 
+    {"xid", 30, 50, &Pm::xid},
+    {"ixl", 1, 10, &Pm::ixl}, 
+    {"xxl", 30, 50, &Pm::xxl},
+    {"xidd", 20, 40, &Pm::xidd}, 
+    {"ixdd", 1, 10, &Pm::ixdd}}
 };
 
 static constexpr std::array<Targets<float>, 4> lh_float_targets{
-    {{"qia", 0.0f, 0.002f, &Pm::qia}, 
-    {"qxa", 0.0f, 0.002f, &Pm::qxa},
-    {"qir", 0.0f, 0.01f, &Pm::qir}, 
-    {"qxr", 0.0f, 0.01f, &Pm::qxr}}
+    {{"qia", 0.001f, 0.004f, &Pm::qia}, 
+    {"qxa", 0.01f, 0.04f, &Pm::qxa},
+    {"qir", 0.001f, 0.01f, &Pm::qir}, 
+    {"qxr", 0.001f, 0.1f, &Pm::qxr}}
 };
 
 string mutate(Pm& h_pm)
@@ -206,6 +207,36 @@ string mutate_lh(Pm& h_pm)
 //     return t_pair.first;
 // }
 
+// int main(int argc, char const* argv[])
+// {
+//     string out_dir_name = "output";
+//     if (argc > 1) out_dir_name = string(argv[1]);
+//     int walk_id = 0;
+//     int attempt = 0;
+//     string status = "pass";
+//     Py_Initialize();
+
+//     ofstream report_file(  // begin report file
+//         "../run/" + out_dir_name + "/report_" + to_string(walk_id) + ".csv");
+//     write_report_header(report_file);
+
+//     for (int i = 0; i < n_steps; i++) {
+//         cout << "Step: " << i << endl;
+//         string target = mutate_lh(h_pm);  // select target and change
+//         tissue_sim(0, NULL, walk_id, i, true, out_dir_name);
+//         // check output
+        
+//         system(
+//             (". ../venv/bin/activate && python3 ../run/render.py " + 
+//                 out_dir_name + " -f 2 -w " + to_string(walk_id) + 
+//                 " -s " + to_string(i)).c_str());
+//         write_report_row(
+//             report_file, walk_id, i, attempt, status, target, h_pm);
+//         report_file.flush();  // flush the buffer
+//     }
+//     return 0;
+// }
+
 int main(int argc, char const* argv[])
 {
     string out_dir_name = "output";
@@ -214,23 +245,100 @@ int main(int argc, char const* argv[])
     int attempt = 0;
     string status = "pass";
 
+    // Set PythonHome to venv
+    setenv("PYTHONPATH", "../venv/lib/python3.11/site-packages", 1);
+
+    // Load python interpreter for phenotyping
+    Py_Initialize();
+    PyRun_SimpleString("import sys; sys.path.append('../run')");
+    PyObject* pName = PyUnicode_FromString("render");
+    PyObject* pModule = PyImport_Import(pName);
+    Py_DECREF(pName);
+
+    if (!pModule) {
+        PyErr_Print();
+        std::cerr << "Failed to load render module\n";
+        return 1;
+    }
+
+    // Get pattern_stats_frame function
+    PyObject* pStats = PyObject_GetAttrString(pModule, "pattern_stats_frame");
+    if (!pStats || !PyCallable_Check(pStats)) {
+        PyErr_Print();
+        std::cerr << "Cannot find function pattern_stats_frame\n";
+        Py_XDECREF(pStats);
+        Py_DECREF(pModule);
+        return 1;
+    }
+    // Get render_frame function
+    PyObject* pRender = PyObject_GetAttrString(pModule, "render_frame");
+    if (!pRender || !PyCallable_Check(pRender)) {
+        PyErr_Print();
+        std::cerr << "Cannot find function render_frame\n";
+        Py_XDECREF(pRender);
+        Py_XDECREF(pStats);
+        Py_DECREF(pModule);
+        return 1;
+    }
+
     ofstream report_file(  // begin report file
-        "../run/output/report_" + to_string(walk_id) + ".csv");
+        "../run/" + out_dir_name + "/report_" + to_string(walk_id) + ".csv");
     write_report_header(report_file);
 
     for (int i = 0; i < n_steps; i++) {
         cout << "Step: " << i << endl;
         string target = mutate_lh(h_pm);  // select target and change
         tissue_sim(0, NULL, walk_id, i, true, out_dir_name);
-        // check output
+
+        // Declare metrics before the Python call
+        int n_clusters = 0;
+        double mean_area = 0.0;
+        double mean_roundness = 0.0;
         
-        system(
-            (". ../venv/bin/activate && python3 ../run/render.py " + 
-                out_dir_name + " -f 2 -w " + to_string(walk_id) + 
-                " -s " + to_string(i)).c_str());
+        // Call pattern_stats_frame with the right arguments
+        // Assuming signature: pattern_stats_frame(folder, walk_id, step, )
+        PyObject* pArgs = PyTuple_Pack(3,
+            PyUnicode_FromString(out_dir_name.c_str()),
+            PyLong_FromLong(walk_id),
+            PyLong_FromLong(i));  
+        
+        PyObject* pResult = PyObject_CallObject(pStats, pArgs);
+        PyObject* pRenderResult = PyObject_CallObject(pRender, pArgs);
+        Py_DECREF(pArgs);
+
+        
+        if (pResult) {
+            // Check if result is a tuple with 3 elements
+            if (PyTuple_Check(pResult) && PyTuple_Size(pResult) == 3) {
+                PyObject* pItem0 = PyTuple_GetItem(pResult, 0);  // borrowed ref
+                PyObject* pItem1 = PyTuple_GetItem(pResult, 1);  // borrowed ref
+                PyObject* pItem2 = PyTuple_GetItem(pResult, 2);  // borrowed ref
+                
+                n_clusters = PyLong_AsLong(pItem0);
+                mean_area = PyFloat_AsDouble(pItem1);
+                mean_roundness = PyFloat_AsDouble(pItem2);
+                
+                cout << "Pattern metrics: " << n_clusters << ", " << mean_area << ", " << mean_roundness << endl;
+                // Use mean_area, mean_roundness in your logic (store in report, etc.)
+            } else {
+                std::cerr << "Expected tuple of 2 floats from pattern_stats_frame\n";
+            }
+            Py_DECREF(pResult);
+        } else {
+            PyErr_Print();
+            std::cerr << "Python function call failed\n";
+        }
+        
         write_report_row(
-            report_file, walk_id, i, attempt, status, target, h_pm);
+            report_file, walk_id, i, attempt, status, target, 
+            n_clusters, mean_area, mean_roundness, h_pm);
         report_file.flush();  // flush the buffer
     }
+
+    // Cleanup
+    Py_XDECREF(pRender);
+    Py_XDECREF(pStats);
+    Py_DECREF(pModule);
+    Py_Finalize();
     return 0;
 }

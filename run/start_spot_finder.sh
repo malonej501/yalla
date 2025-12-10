@@ -7,7 +7,7 @@ gpu_type="rtx2080with12gb"  # rtx2080with12gb, rtx3090with24gb
 queue="gpulong"            # gpushort, gpulong
 mem=4                       # allocated memory in GB
 comment="none"            # comment for the job
-out_dir_name="output"      # default output directory name
+out_dir_name="sample_test"      # default output directory name
 
 # get command line arguments
 POSITIONAL_ARGS=()      # array to hold positional arguments
@@ -32,8 +32,9 @@ mkdir -p ${out_dir_name}
 source /etc/profile
 cd /mnt/users/jmalone/GitHub/yalla/run
 rm -f exec*
-rm -rf output/*
+rm -rf ${out_dir_name}/*
 module load cuda
+module load python/3.11.4
 
 # generate .h file from default parameters
 source ../venv/bin/activate
@@ -45,7 +46,6 @@ echo "Compiling..."
 source /etc/profile
 # nvcc -std=c++14 -arch=sm_61 ../sample/spot_finder.cu -o exec
 # echo "Compilation time: $SECONDS seconds"
-module load cuda
 
 PYTHON_INCLUDE="-I/usr/local/shared/python/3.11.4/include/python3.11"
 PYTHON_LIBDIR="-L/usr/local/shared/python/3.11.4/lib"

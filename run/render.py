@@ -40,19 +40,22 @@ EPS = 0.05  # maximum distance between two samples for one to be considered
 # as in the neighborhood of the other
 
 
-def render_frame():
+def render_frame(folder_path=FOLDER_PATH, walk_id=WALK_ID, step=STEP):
     """Render the final element of a list of vtks offscreen and export as
     .png"""
+
+    vtks = load(f"{folder_path}/out_{walk_id}_{step}_*.vtk")
+
+    vtk = vtks[-1] if isinstance(vtks, list) else vtks  # select final frame
 
     # virtual display for offscreen rendering
     display = Display(visible=0, size=(1366, 768))
     display.start()
-    vtk = VTKS[-1] if isinstance(VTKS, list) else VTKS  # select final frame
     cmap = "viridis"
     points = Points(vtk).point_size(
         PT_SIZE * ZOOM).cmap(cmap, C_PROP).alpha(PA)
     p = show(points, interactive=False)
-    p.screenshot(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}.png")
+    p.screenshot(f"{folder_path}/out_{walk_id}_{step}.png")
     p.close()
     display.stop()
 
@@ -265,11 +268,15 @@ def tissue_stats():
     print(stats_df)
 
 
-def pattern_stats_frame():
+def pattern_stats_frame(folder_path=FOLDER_PATH, walk_id=WALK_ID, step=STEP):
     """Cluster spot cells and infer alpha shapes and shape stats for a single
-    frame"""
+    frame.
+    
+    Returns: number of clusters, mean area, mean roundness"""
 
-    vtk = VTKS[-1] if isinstance(VTKS, list) else VTKS  # select final frame
+    vtks = load(f"{folder_path}/out_{walk_id}_{step}_*.vtk")
+
+    vtk = vtks[-1] if isinstance(vtks, list) else vtks  # select final frame
 
     # return positions of spot cells
     cell_types = vtk.pointdata["cell_type"]
@@ -301,9 +308,8 @@ def pattern_stats_frame():
         stats.append({"label": None, "geom_type": None,
                       "area": None, "roundness": None})
     stats_df = pd.DataFrame(stats)
-    print(stats_df)
 
-    print(stats_df["area"].mean(), stats_df["roundness"].mean())
+    return (len(stats_df), stats_df["area"].mean(), stats_df["roundness"].mean())
 
 
 def pattern_stats(fin=False, rays=False):
@@ -828,8 +834,6 @@ if __name__ == "__main__":
             VTKS = load(cell_vtks)
             pattern_stats(fin=FIN, rays=RAYS)
         elif FUNC == 2:
-            VTKS = load(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_*.vtk")
             render_frame()
         elif FUNC == 3:
-            VTKS = load(f"{FOLDER_PATH}/out_{WALK_ID}_{STEP}_*.vtk")
             pattern_stats_frame()
