@@ -30,7 +30,7 @@ CELLS = True  # render cells if present
 WALLS = True  # render walls if present
 FIN = True  # render fin mesh if present
 RAYS = True  # render ray mesh if present
-FOLDER_PATH = "../run/saves/test"  # default output folder
+FOLDER_PATH = "../run/sample_test"  # default output folder
 VTKS = None  # list of vtk files
 WALK_ID = 0  # defualt if only one tissue simulation
 STEP = 0
@@ -292,7 +292,7 @@ def pattern_stats_frame(folder_path=FOLDER_PATH, walk_id=WALK_ID, step=STEP):
     core_samples_mask = np.zeros_like(labels, dtype=bool)
     core_samples_mask[db.core_sample_indices_] = True
 
-    stats = []
+    stats, ashs = [], []
     for l in unique_labels:
         class_member_mask = labels == l
         xy = x_spots[class_member_mask & core_samples_mask]
@@ -303,11 +303,36 @@ def pattern_stats_frame(folder_path=FOLDER_PATH, walk_id=WALK_ID, step=STEP):
             roundness = (4 * math.pi * ash.area) / (perimeter**2)
             stats.append({"label": l, "geom_type": ash.geom_type,
                           "area": ash.area, "roundness": roundness})
+            ASH_Z = 0.1  # z height for rendering alpha shapes
+            ASH_LW = 4  # line width for rendering alpha shapes
+            a_shape_np = np.array(ash.exterior.coords)
+            z_col = np.full((a_shape_np.shape[0], 1), ASH_Z)
+            a_shape_np = np.hstack((a_shape_np, z_col))
+            cells = np.array([range(len(a_shape_np))])
+
+            a_mesh = Line(a_shape_np).color("purple").linewidth(ASH_LW)
+            ashs.append(a_mesh)
     if not stats:
         print("No spot cell clusters found.")
         stats.append({"label": None, "geom_type": None,
                       "area": None, "roundness": None})
     stats_df = pd.DataFrame(stats)
+
+    # render frame
+
+    # virtual display for offscreen rendering
+    display = Display(visible=0, size=(1366, 768))
+    display.start()
+    cmap = "viridis"
+    points = Points(vtk).point_size(
+        PT_SIZE * ZOOM).cmap(cmap, C_PROP).alpha(PA)
+    p = Plotter(interactive=False)
+    p.add(ashs)
+    p.add(points)
+    p.show()
+    p.screenshot(f"{folder_path}/out_{walk_id}_{step}.png")
+    p.close()
+    display.stop()
 
     return (len(stats_df), stats_df["area"].mean(), stats_df["roundness"].mean())
 

@@ -270,16 +270,6 @@ int main(int argc, char const* argv[])
         Py_DECREF(pModule);
         return 1;
     }
-    // Get render_frame function
-    PyObject* pRender = PyObject_GetAttrString(pModule, "render_frame");
-    if (!pRender || !PyCallable_Check(pRender)) {
-        PyErr_Print();
-        std::cerr << "Cannot find function render_frame\n";
-        Py_XDECREF(pRender);
-        Py_XDECREF(pStats);
-        Py_DECREF(pModule);
-        return 1;
-    }
 
     ofstream report_file(  // begin report file
         "../run/" + out_dir_name + "/report_" + to_string(walk_id) + ".csv");
@@ -303,7 +293,6 @@ int main(int argc, char const* argv[])
             PyLong_FromLong(i));  
         
         PyObject* pResult = PyObject_CallObject(pStats, pArgs);
-        PyObject* pRenderResult = PyObject_CallObject(pRender, pArgs);
         Py_DECREF(pArgs);
 
         
@@ -336,7 +325,6 @@ int main(int argc, char const* argv[])
     }
 
     // Cleanup
-    Py_XDECREF(pRender);
     Py_XDECREF(pStats);
     Py_DECREF(pModule);
     Py_Finalize();
