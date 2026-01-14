@@ -612,6 +612,9 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
     handles = []
     for i, fr in enumerate(frames):
         frame = Frame(run_id=run_id, wid=0, step=0, frame=fr)
+        if not frame.pt_mesh:
+            print(f"Frame {fr} has no vertices, skipping.")
+            continue
         pts = {"x": frame.pt_mesh.vertices[:, 0],
                "y": frame.pt_mesh.vertices[:, 1],
                "prop": frame.pt_mesh.pointdata[props[CPROP]]}
