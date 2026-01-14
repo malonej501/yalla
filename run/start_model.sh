@@ -37,6 +37,8 @@ rm exec*
 rm output/*
 module load cuda
 
+# ensure libpython is found by the venv/python
+export LD_LIBRARY_PATH="/usr/local/shared/python/3.11.4/lib:$LD_LIBRARY_PATH"
 # generate .h file from default parameters
 source ../venv/bin/activate
 if [[ "$version" -eq "0" ]]; then
@@ -45,6 +47,8 @@ elif [[ "$version" -eq "1" ]]; then
     python3 ../sample/pwriter.py -p volk_params.csv
 elif [[ "$version" -eq "2" ]]; then
     python3 ../sample/pwriter.py -p eggspot_layers_params.csv
+elif [[ "$version" -eq "3" ]]; then
+    python3 ../sample/pwriter.py -p eggspot_layers_realtime_params.csv
 fi
 deactivate
 
@@ -57,6 +61,16 @@ elif [[ "$version" -eq "1" ]]; then
     /usr/local/cuda/bin/nvcc -std=c++17 -arch=sm_61 ../examples/volk.cu -o exec
 elif [[ "$version" -eq "2" ]]; then
     /usr/local/cuda/bin/nvcc -std=c++17 -arch=sm_61 ../examples/eggspot_layers.cu -o exec
+elif [[ "$version" -eq "3" ]]; then
+    QT_LIBDIR=$(pkg-config --variable=libdir Qt5Widgets)
+    export LD_LIBRARY_PATH="$QT_LIBDIR:$LD_LIBRARY_PATH"
+    QT_CFLAGS=$(pkg-config --cflags Qt5Widgets)
+    QT_LIBS=$(pkg-config --libs Qt5Widgets)
+    /usr/local/cuda/bin/nvcc -DWITH_QT -std=c++17 -arch=sm_61 \
+    -Xcompiler -fPIC \
+    -I$(pkg-config --cflags Qt5Widgets) \
+    $(pkg-config --libs Qt5Widgets) -lGL \
+    ../examples/eggspot_layers_realtime.cu -o exec
 fi
 echo "Compilation time: $SECONDS seconds"
 
@@ -89,6 +103,11 @@ elif [[ "$version" -eq "1" ]]; then
     cp ../examples/volk.cu output/volk.cu
     cp ../params/volk_params.csv output/volk_params.csv
 elif [[ "$version" -eq "2" ]]; then
+    python3 ../sample/phenotype.py -d output -f 1 # render basic timeseries
+    mv ../sample/output_tseries_mtpl.pdf output/aoutput_tseries_mtpl.pdf
     cp ../examples/eggspot_layers.cu output/eggspot_layers.cu
     cp ../params/eggspot_layers_params.csv output/eggspot_layers_params.csv
+elif [[ "$version" -eq "3" ]]; then
+    cp ../examples/eggspot_layers_realtime.cu output/eggspot_layers_realtime.cu
+    cp ../params/eggspot_layers_realtime_params.csv output/eggspot_layers_realtime_params.csv
 fi
