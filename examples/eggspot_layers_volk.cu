@@ -93,20 +93,41 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     float Rep = d_pm.Rxx * 0.2;  // because t=0.2*day
     float rep = d_pm.rxx;
 
-    const float interactions[5][5] = {
-        // 1 means interact, 0 means no
+    // const float interactions[5][5] = {
+    //     // 1 means interact, 0 means no
+    //     // rows: cell i type, cols: cell j type
+    //     // M   Xd   Xl   Id   Il
+    //     {1.0, 1.0, 0.0, 1.0, 0.0},  // M
+    //     {0.0, 1.0, 1.0, 0.0, 0.0},  // Xd
+    //     {0.0, 1.0, 1.0, 0.0, 0.0},  // Xl
+    //     {0.0, 0.0, 0.0, 1.0, 1.0},  // Id
+    //     {0.0, 0.0, 0.0, 1.0, 1.0}   // Il
+    // };
+
+    // const float interactions[5][5][2] = {
+    //     // [i][j][0] = Rep, [i][j][1] = rep
+    //     // rows: cell i type, cols: cell j type
+    //     //      M             Xd             Xl           Id            Il
+    //     {{0.02, 0.05}, {0.02, 0.067}, {0.00, 0.00}, {0.005, 0.03}, {0.00, 0.00}},  // M
+    //     {{0.015, 0.067}, {0.016, 0.045}, {0.016, 0.045}, {0.00, 0.00}, {0.00, 0.00}},  // Xd
+    //     {{0.00, 0.00}, {0.016, 0.045}, {0.016, 0.06}, {0.00, 0.00}, {0.00, 0.00}},  // Xl
+    //     {{0.00, 0.00}, {-0.005, 0.09}, {0.00, 0.00}, {0.01, 0.04}, {0.035, 0.04}},  // Id
+    //     {{0.00, 0.00}, {0.00, 0.00}, {0.00, 0.00}, {0.032, 0.04}, {0.032, 0.04}}   // Il
+    // };
+     const float interactions[5][5][2] = {
+        // [i][j][0] = Rep, [i][j][1] = rep
         // rows: cell i type, cols: cell j type
-        // M   Xd   Xl   Id   Il
-        {1.0, 1.0, 0.0, 1.0, 0.0},  // M
-        {0.0, 1.0, 1.0, 0.0, 0.0},  // Xd
-        {0.0, 1.0, 1.0, 0.0, 0.0},  // Xl
-        {0.0, 0.0, 0.0, 1.0, 1.0},  // Id
-        {0.0, 0.0, 0.0, 1.0, 1.0}   // Il
+        //      M             Xd             Xl           Id            Il
+        {{0.02, 0.05}, {0.02, 0.067}, {0.00, 0.00}, {0.005, 0.03}, {0.00, 0.00}},  // M
+        {{0.015, 0.067}, {0.016, 0.045}, {0.016, 0.045}, {0.00, 0.00}, {0.00, 0.00}},  // Xd
+        {{0.00, 0.00}, {0.016, 0.045}, {0.016, 0.06}, {0.00, 0.00}, {0.00, 0.00}},  // Xl
+        {{0.00, 0.00}, {0.00, 0.00}, {0.00, 0.00}, {0.01, 0.04}, {0.035, 0.04}},  // Id
+        {{0.00, 0.00}, {0.00, 0.00}, {0.00, 0.00}, {0.032, 0.04}, {0.032, 0.04}}   // Il
     };
 
     if (d_pm.diff_adh_rep && d_cell_type[i] >= 0 && d_cell_type[j] >= 0) {
-        Rep *= interactions[d_cell_type[i]][d_cell_type[j]];
-        rep *= interactions[d_cell_type[i]][d_cell_type[j]];        
+        Rep = interactions[d_cell_type[i]][d_cell_type[j]][0];  
+        rep = interactions[d_cell_type[i]][d_cell_type[j]][1];        
     }
 
 
@@ -159,11 +180,11 @@ __global__ void stage_new_cells(int n_cells, curandState* d_state, float3* d_X,
         d_old_v[n] = d_old_v[i];
 
         if (i < (d_pm.n_new_cells / 2)) {
-            d_cell_type[n] = -3;  // I staging type
-            d_X[n].z = 0;         // I layer z
+            d_cell_type[n] = -2;  // M staging 
+            d_X[n].z = 0;         
         } else {
-            d_cell_type[n] = -2;          // X staging type
-            d_X[n].z = 0 + d_pm.s_layer;  // X above I
+            d_cell_type[n] = -3;  // X staging   
+            d_X[n].z = 0;  
         }
         // Remove if outside mesh
         if (test_exclusion(wall_mesh, d_X[n])) {
@@ -182,13 +203,13 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
     if (n_cells >= (d_pm.n_max * 0.9)) return;  // no div above n_max
 
      if (d_cell_type[i] == 0){ // M
+        int n_d0 = d_ngs_d[NGS_IDX(0, i)];
         int n_d1 = d_ngs_d[NGS_IDX(1, i)];
         int n_d3 = d_ngs_d[NGS_IDX(3, i)];
-        int n_d0 = d_ngs_d[NGS_IDX(0, i)];
-        int n1 = d_ngs[NGS_IDX(1, i)];
         int n0 = d_ngs[NGS_IDX(0, i)];
+        int n1 = d_ngs[NGS_IDX(1, i)];
         int n3 = d_ngs[NGS_IDX(3, i)];
-        if (n_d1 + n_d3 > 3 + 3.5f * n_d0 && (n1 + n0 + n3) <= 10)
+        if (n_d1 + n_d3 > 3 + 3.5f * n_d0 && (n1 + n0 + n3) <= 4)
          {
              int n = atomicAdd(d_n_cells, 1);
              float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
@@ -197,11 +218,23 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
              d_X[n].z = 0;
              d_old_v[n] = d_old_v[i];
              d_mech_str[n] = 0.0;
-             d_cell_type[n] = 2;  
+             d_cell_type[n] = 0;  
          }
      }
+     if (d_cell_type[i] == -2) { // M staging
+        if (d_ngs[NGS_IDX(0,i)] + d_ngs[NGS_IDX(1,i)] == 0){
+            int n = atomicAdd(d_n_cells, 1);
+             float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
+             d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
+             d_X[n].y = d_X[i].y + (d_pm.div_dist * sinf(theta));
+             d_X[n].z = 0;
+             d_old_v[n] = d_old_v[i];
+             d_mech_str[n] = 0.0;
+             d_cell_type[n] = 0;  
+        }
+    }
     if (d_cell_type[i] == 1){ // Xd
-        if (d_ngs[NGS_IDX(1,i)] + d_ngs[NGS_IDX(2,i)] <= 10) {
+        if (d_ngs[NGS_IDX(1,i)] + d_ngs[NGS_IDX(2,i)] <= 6) {
             int n = atomicAdd(d_n_cells, 1);
             float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
             d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
@@ -209,11 +242,11 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
             d_X[n].z = 0;
             d_old_v[n] = d_old_v[i];
             d_mech_str[n] = 0.0;
-            d_cell_type[n] = 2;  
+            d_cell_type[n] = 1;  
         }
     }
     if (d_cell_type[i] == 2){ //Xl
-        if (d_ngs[NGS_IDX(1,i)] + d_ngs[NGS_IDX(2,i)] <= 9) {
+        if (d_ngs[NGS_IDX(1,i)] + d_ngs[NGS_IDX(2,i)] <= 1) {
             int n = atomicAdd(d_n_cells, 1);
             float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
             d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
@@ -224,8 +257,20 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
             d_cell_type[n] = 2;  
         }    
     }
+    if (d_cell_type[i] == -3) { // Xl staging
+        if (d_ngs[NGS_IDX(1,i) + d_ngs[NGS_IDX(2,i)] == 0]){
+            int n = atomicAdd(d_n_cells, 1);
+            float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
+            d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
+            d_X[n].y = d_X[i].y + (d_pm.div_dist * sinf(theta));
+            d_X[n].z = 0;
+            d_old_v[n] = d_old_v[i];
+            d_mech_str[n] = 0.0;
+            d_cell_type[n] = 2;  
+        }
+    }
     if (d_cell_type[i] == 3){ //Id
-        if (d_ngs[NGS_IDX(3,i)] + d_ngs[NGS_IDX(4,i)] <= 15) {
+        if (d_ngs[NGS_IDX(3,i)] + d_ngs[NGS_IDX(4,i)] <= 7) {
             int n = atomicAdd(d_n_cells, 1);
             float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
             d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
@@ -237,7 +282,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
         }
     }
     if (d_cell_type[i] == 4){ //Il
-        if (d_ngs[NGS_IDX(3,i)] + d_ngs[NGS_IDX(4,i)] <= 14) {
+        if (d_ngs[NGS_IDX(3,i)] + d_ngs[NGS_IDX(4,i)] <= 7) {
             int n = atomicAdd(d_n_cells, 1);
             float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
             d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
@@ -245,7 +290,7 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
             d_X[n].z = 0;
             d_old_v[n] = d_old_v[i];
             d_mech_str[n] = 0.0;
-            d_cell_type[n] = 3;
+            d_cell_type[n] = 4;  
         }
     }
 }
@@ -259,17 +304,18 @@ __global__ void death(
     // if (d_cell_type[i] == -1 || d_cell_type[i] == -2) return;  // don't die
 
     if (d_cell_type[i] == 0) { // M
-        if ((d_ngs[NGS_IDX(1,i)] > 1.25f * d_ngs[NGS_IDX(0,i)] ||
+        if ((d_ngs[NGS_IDX(1,i)] > 1.25f * d_ngs[NGS_IDX(0,i)]) ||
             (d_ngs_d[NGS_IDX(0,i)] >= 2 * d_ngs_d[NGS_IDX(1,i)] &&
-             d_ngs[NGS_IDX(4,i)] < 3)) &&
-            curand_uniform(&d_state[i]) < 0.0333f) {
+             d_ngs[NGS_IDX(4,i)] < 3 &&
+            curand_uniform(&d_state[i]) < 0.0333f)) {
              d_cell_type[i] = -1;
          }
      }
 }
 
 __global__ void cell_switching(
-    int n_cells, float3* d_X, const float* d_slow_reg, Plane* d_ray_plane)
+    int n_cells, curandState* d_state, float3* d_X, const float* d_slow_reg, 
+    Plane* d_ray_plane)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_cells) return;
@@ -280,7 +326,9 @@ __global__ void cell_switching(
          }
      }
     if (d_cell_type[i] == 2) { // Xl
-        if (d_ngs[NGS_IDX(3,i)] > 1 + d_ngs[NGS_IDX(4,i)] + d_ngs[NGS_IDX(0,i)]) {
+        if (d_ngs[NGS_IDX(3,i)] + 
+            ((curand_uniform(&d_state[i]) > 0.5) * d_ngs[NGS_IDX(1,i)]) > // Bernoulli
+            1 + d_ngs[NGS_IDX(4,i)] + d_ngs[NGS_IDX(0,i)]) {
              d_cell_type[i] = 1; // Xl -> Xd
          }
      }
@@ -683,8 +731,19 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
         output.write_property(mech_str);
         output.write_property(cell_type);
         output.write_property(in_slow);
-        output.write_property(ngs);
-        output.write_property(ngs_d);
+        int n_cells = *cells.h_n;
+        const char* ngs_names[N_TYPES] = {"ngs_M", "ngs_Xd", "ngs_Xl",
+                                            "ngs_Id", "ngs_Il"};
+        for (int t = 0; t < N_TYPES; ++t) {
+            Property<int> ngs_t{h_pm.n_max, ngs_names[t]};
+            for (int i = 0; i < n_cells; ++i) {
+                int flat_idx = t * h_pm.n_max + i;
+                ngs_t.h_prop[i] = ngs.h_prop[flat_idx];
+            }
+            cudaMemcpy(ngs_t.d_prop, ngs_t.h_prop,
+                        n_cells * sizeof(int), cudaMemcpyHostToDevice);
+            output.write_property(ngs_t);
+        }
         fin.write_vtk();
         fin_rays.write_vtk();
     }
@@ -728,7 +787,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
             }
             if (h_pm.type_switch)
                 cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), cells.d_X, d_slow_reg,
+                    cells.get_d_n(), d_state, cells.d_X, d_slow_reg,
                     d_ray_plane);   // switch cell types if
                                     // conditions are met
             if (h_pm.death_switch)  // death occurs once per day - 20 days total
@@ -738,7 +797,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
                     cells.get_d_n(), d_state, cells.d_X, cells.d_n);
             // }
             compact_cells_with_remove_if(cells.get_d_n(), cells.d_X, W.d_prop,
-                cell_type.d_prop, mech_str.d_prop, in_slow.d_prop, ngs.d_prop, 
+                cell_type.d_prop, mech_str.d_prop, in_slow.d_prop, ngs.d_prop,
                 ngs_d.d_prop, cells.d_n);
 
             cells.take_step<pairwise_force, friction_on_background>(
@@ -759,8 +818,19 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
             output.write_property(mech_str);
             output.write_property(cell_type);
             output.write_property(in_slow);
-            output.write_property(ngs);
-            output.write_property(ngs_d);
+            int n_cells = *cells.h_n;
+            const char* ngs_names[N_TYPES] = {"ngs_M", "ngs_Xd", "ngs_Xl",
+                                              "ngs_Id", "ngs_Il"};
+            for (int t = 0; t < N_TYPES; ++t) {
+                Property<int> ngs_t{h_pm.n_max, ngs_names[t]};
+                for (int i = 0; i < n_cells; ++i) {
+                    int flat_idx = t * h_pm.n_max + i;
+                    ngs_t.h_prop[i] = ngs.h_prop[flat_idx];
+                }
+                cudaMemcpy(ngs_t.d_prop, ngs_t.h_prop,
+                           n_cells * sizeof(int), cudaMemcpyHostToDevice);
+                output.write_property(ngs_t);
+            }
             fin.write_vtk();
             fin_rays.write_vtk();
         }
