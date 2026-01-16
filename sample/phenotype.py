@@ -25,7 +25,7 @@ WD = "../run/saves/"
 NSHOW = 0  # no. fins to show in real fin comparison
 EXPORT = False
 SHARE_AXES = False  # share axes in time series plots
-CPROP = 0  # cell property to color by in vedo renderings
+CPROP = 1  # cell property to color by in vedo renderings
 # 0: mech_str, 1: cell_type, 2: in_slow, 3: ngs_A, 4: ngs_B,
 # 5: ngs_Ac, 6: ngs_Bc, 7: ngs_Ad, 8: ngs_Bd
 
@@ -605,6 +605,7 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
     """Plot a course time series of simulation frames using matplotlib."""
 
     properties = tissue_properties(run_id, CPROP)
+    vmin, vmax = properties[0], properties[1]
     frames = np.linspace(0, 100, n_frames, dtype=int)
     # frames = np.linspace(10, 70, n_frames, dtype=int)  # for wall-penetrating
     print(frames)
@@ -632,9 +633,19 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
                "y": frame.pt_mesh.vertices[:, 1],
                "prop": frame.pt_mesh.pointdata[props[CPROP]]}
         pts = pd.DataFrame(pts)
-        sc = axs[i].scatter(pts["x"], pts["y"], s=1, alpha=0.7,
-                            c=pts["prop"], cmap="viridis",
-                            rasterized=True)  # rasterize for large data
+        if CPROP == 1:
+            for ct in properties:
+                pts_ct = pts[pts["prop"] == ct]
+                sc = axs[i].scatter(
+                    pts_ct["x"], pts_ct["y"], s=5, alpha=0.7,
+                    label=ct, rasterized=True)  # rasterize for large data
+                if fr == frames[0]:  # only add legend handles once
+                    handles.append(sc)
+        else:
+            sc = axs[i].scatter(
+                pts["x"], pts["y"], s=1, alpha=0.7,
+                c=pts["prop"], cmap="viridis", vmin=vmin, vmax=vmax,
+                rasterized=True)  # rasterize for large data
 
         if sb:  # scale bar 1mm
             x0, x1 = axs[i].get_xlim()
