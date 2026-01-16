@@ -122,29 +122,32 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
     //     {0.0, 0.0, 0.0, 1.0, 1.0}   // Il
     // };
 
-    // const float interactions[5][5][2] = {
+    // const float interactions[5][5][2] = { // with iridophore attraction
     //     // [i][j][0] = Rep, [i][j][1] = rep
     //     // rows: cell i type, cols: cell j type
     //     //      M             Xd             Xl           Id            Il
-    //     {{0.02, 0.05}, {0.02, 0.067}, {0.00, 0.00}, {0.005, 0.03}, {0.00, 0.00}},  // M
-    //     {{0.015, 0.067}, {0.016, 0.045}, {0.016, 0.045}, {0.00, 0.00}, {0.00, 0.00}},  // Xd
-    //     {{0.00, 0.00}, {0.016, 0.045}, {0.016, 0.06}, {0.00, 0.00}, {0.00, 0.00}},  // Xl
-    //     {{0.00, 0.00}, {-0.005, 0.09}, {0.00, 0.00}, {0.01, 0.04}, {0.035, 0.04}},  // Id
-    //     {{0.00, 0.00}, {0.00, 0.00}, {0.00, 0.00}, {0.032, 0.04}, {0.032, 0.04}}   // Il
+    //     {{0.02, 0.05}, {0.02, 0.067}, {0.01, 0.01}, {0.015, 0.03}, {0.01, 0.01}},  // M
+    //     {{0.015, 0.067}, {0.016, 0.045}, {0.016, 0.045}, {0.01, 0.01}, {0.01, 0.01}},  // Xd
+    //     {{0.01, 0.01}, {0.016, 0.045}, {0.016, 0.06}, {0.01, 0.01}, {0.01, 0.01}},  // Xl
+    //     {{0.01, 0.01}, {-0.015, 0.09}, {0.01, 0.01}, {0.01, 0.04}, {0.035, 0.04}},  // Id
+    //     {{0.01, 0.01}, {0.01, 0.01}, {0.01, 0.01}, {0.032, 0.04}, {0.032, 0.04}}   // Il
     // };
-     const float interactions[5][5][2] = {
-        // [i][j][0] = Rep, [i][j][1] = rep
+    // without iridophore attraction
+    const float interactions[5][5][2] = { 
+        // [i][j][0] = Rep mm/day, [i][j][1] = rep mm
         // rows: cell i type, cols: cell j type
         //      M             Xd             Xl           Id            Il
-        {{0.02, 0.05}, {0.02, 0.067}, {0.00, 0.00}, {0.005, 0.03}, {0.00, 0.00}},  // M
-        {{0.015, 0.067}, {0.016, 0.045}, {0.016, 0.045}, {0.00, 0.00}, {0.00, 0.00}},  // Xd
-        {{0.00, 0.00}, {0.016, 0.045}, {0.016, 0.06}, {0.00, 0.00}, {0.00, 0.00}},  // Xl
-        {{0.00, 0.00}, {0.00, 0.00}, {0.00, 0.00}, {0.01, 0.04}, {0.035, 0.04}},  // Id
-        {{0.00, 0.00}, {0.00, 0.00}, {0.00, 0.00}, {0.032, 0.04}, {0.032, 0.04}}   // Il
+        {{0.02, 0.05}, {0.02, 0.067}, {0.01, 0.01}, {0.015, 0.03}, {0.01, 0.01}},  // M
+        {{0.015, 0.067}, {0.016, 0.045}, {0.016, 0.045}, {0.01, 0.01}, {0.01, 0.01}},  // Xd
+        {{0.01, 0.01}, {0.016, 0.045}, {0.016, 0.06}, {0.01, 0.01}, {0.01, 0.01}},  // Xl
+        {{0.01, 0.01}, {0.01, 0.01}, {0.01, 0.01}, {0.01, 0.04}, {0.035, 0.04}},  // Id
+        {{0.01, 0.01}, {0.01, 0.01}, {0.01, 0.01}, {0.032, 0.04}, {0.032, 0.04}}   // Il
     };
 
+    constexpr float time_scale = 0.2 * 0.1; // 1t = 0.2 day, 1dt = 0.1t 
+
     if (d_pm.diff_adh_rep && d_cell_type[i] >= 0 && d_cell_type[j] >= 0) {
-        Rep = interactions[d_cell_type[i]][d_cell_type[j]][0];  
+        Rep = interactions[d_cell_type[i]][d_cell_type[j]][0] * time_scale;  
         rep = interactions[d_cell_type[i]][d_cell_type[j]][1];        
     }
 
@@ -220,9 +223,11 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
     if (i >= n_cells) return;                   // stop if i >= n_cells
     if (n_cells >= (d_pm.n_max * 0.9)) return;  // no div above n_max
 
-     if (d_cell_type[i] == 0){ // M
-        if (d_ngs_d[NGS_IDX(1,i)] + d_ngs_d[NGS_IDX(3,i)] > 3 + 3.5f * d_ngs_d[NGS_IDX(0,i)] && 
-            (d_ngs_82[NGS_IDX(1,i)] + d_ngs_82[NGS_IDX(0,i)] + d_ngs_82[NGS_IDX(3,i)]) <= 4)
+     if (d_cell_type[i] == -2){ // M
+        if (
+            (d_ngs_d[NGS_IDX(1,i)] + d_ngs_d[NGS_IDX(3,i)] > 3 + 3.5f * d_ngs_d[NGS_IDX(0,i)] && 
+            (d_ngs_82[NGS_IDX(1,i)] + d_ngs_82[NGS_IDX(0,i)] + d_ngs_82[NGS_IDX(3,i)]) <= 4) ||
+            d_ngs_82[NGS_IDX(0,i)] + d_ngs_82[NGS_IDX(1,i)] == 0)
          {
              int n = atomicAdd(d_n_cells, 1);
              float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
@@ -234,18 +239,18 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
              d_cell_type[n] = 0;  
          }
      }
-     if (d_cell_type[i] == -2) { // M staging
-        if (d_ngs_82[NGS_IDX(0,i)] + d_ngs_82[NGS_IDX(1,i)] == 0){
-            int n = atomicAdd(d_n_cells, 1);
-             float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
-             d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
-             d_X[n].y = d_X[i].y + (d_pm.div_dist * sinf(theta));
-             d_X[n].z = 0;
-             d_old_v[n] = d_old_v[i];
-             d_mech_str[n] = 0.0;
-             d_cell_type[n] = 0;  
-        }
-    }
+    //  if (d_cell_type[i] == -2) { // M staging
+    //     if (d_ngs_82[NGS_IDX(0,i)] + d_ngs_82[NGS_IDX(1,i)] == 0){
+    //         int n = atomicAdd(d_n_cells, 1);
+    //          float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
+    //          d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
+    //          d_X[n].y = d_X[i].y + (d_pm.div_dist * sinf(theta));
+    //          d_X[n].z = 0;
+    //          d_old_v[n] = d_old_v[i];
+    //          d_mech_str[n] = 0.0;
+    //          d_cell_type[n] = 0;  
+    //     }
+    // }
     if (d_cell_type[i] == 1){ // Xd
         if (d_ngs_82[NGS_IDX(1,i)] + d_ngs_82[NGS_IDX(2,i)] <= 6) {
             int n = atomicAdd(d_n_cells, 1);
@@ -320,7 +325,7 @@ __global__ void death(
         if ((d_ngs_90[NGS_IDX(1,i)] > 1.25f * d_ngs_90[NGS_IDX(0,i)]) ||
             (d_ngs_d[NGS_IDX(0,i)] >= 2 * d_ngs_d[NGS_IDX(1,i)] &&
              d_ngs_45[NGS_IDX(4,i)] < 3 &&
-            curand_uniform(&d_state[i]) < 0.0333f)) {
+            curand_uniform(&d_state[i]) < 0.0333f * 0.2 * 0.1)) { // because of t and dt units
              d_cell_type[i] = -1;
          }
      }
@@ -474,14 +479,19 @@ void compact_cells_with_remove_if(int n_cells, float3* d_X, float3* d_W,
     int* d_cell_type, float* d_mech_str, bool* d_in_slow, int* d_ngs_45, 
     int* d_ngs_75, int* d_ngs_82, int* d_ngs_90, int* d_ngs_d, int* d_n_cells)
 {
-    // Create zip iterators for all arrays
-    auto first = thrust::make_zip_iterator(thrust::make_tuple(d_cell_type, d_X,
-        d_W, d_mech_str, d_in_slow, d_ngs_45, d_ngs_75, d_ngs_82, d_ngs_90, d_ngs_d));
+    // N.B. any properties that are not compacted here must be recalculated
+    // elsewhere before being used again! e.g. all neighbour counts
+    // otherwise they will be out of sync with the cell arrays
+    // Create zip iterators for per-cell arrays only
+    auto first = thrust::make_zip_iterator(thrust::make_tuple(
+        d_cell_type, d_X, d_W, d_mech_str, d_in_slow));
     auto last = first + n_cells;
 
-    // Remove dead cells (cell_type < 0) from all arrays
-    auto new_end = thrust::remove_if(thrust::device, first, last,
-        thrust::make_zip_iterator(thrust::make_tuple(d_cell_type)), is_dead());
+    // Stencil: only cell_type decides if a tuple is removed
+    auto stencil = thrust::make_zip_iterator(thrust::make_tuple(d_cell_type));
+
+    auto new_end = thrust::remove_if(
+        thrust::device, first, last, stencil, is_dead());
 
     // Update n_cells
     int new_n = new_end - first;
@@ -623,7 +633,7 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
         cudaMemcpy(
             d_ray_plane, &ray_plane, sizeof(Plane), cudaMemcpyHostToDevice);
     }
-    if (h_pm.tmode == 4) {  // cut the fin mesh out of a random cloud of cells
+    if (h_pm.tmode == 4) {  // volkening initial condition with stripe in mid
         Mesh tis{"../inits/fin_init.vtk"};
         tis.rescale(h_pm.tis_s);
         auto tis_min = tis.get_minimum();
@@ -639,10 +649,17 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
         *cells.h_n = std::distance(cells.h_X, new_n);
         for (int i = 0; i < h_pm.n_0; i++) {  // set cell types
             // spot cells appear in leftmost 10% of tissue
-            if (cells.h_X[i].x < tis.get_minimum().x + (x_len * 0.1))
-                cell_type.h_prop[i] = (std::rand() % 100 < 50) ? 1 : 2;
-            else
-                cell_type.h_prop[i] = 2;
+
+            float mid = (tis.get_maximum().y + tis.get_minimum().y) / 2;
+            if (cells.h_X[i].y < mid + 0.05 && cells.h_X[i].y > mid -0.05) {
+                cell_type.h_prop[i] = 3;
+            } else {
+                if (std::rand() % 100 < 10) {
+                    cell_type.h_prop[i] = 0; // 10% M cells randomly
+                } else {
+                    cell_type.h_prop[i] = 2; // rest Xl
+                }
+            }
         }
         update_slow_reg(tis, slow_reg);
         cudaMemcpy(
@@ -716,15 +733,15 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
             in_slow.d_prop + cells.get_d_n(), false);
         // zero flattened per-type arrays on device (cells.get_d_n() * N_TYPES)
         thrust::fill(thrust::device, ngs_45.d_prop,
-            ngs_45.d_prop + (cells.get_d_n() * N_TYPES), 0);
+            ngs_45.d_prop + (h_pm.n_max * N_TYPES), 0);
         thrust::fill(thrust::device, ngs_75.d_prop,
-            ngs_75.d_prop + (cells.get_d_n() * N_TYPES), 0);
+            ngs_75.d_prop + (h_pm.n_max * N_TYPES), 0);
         thrust::fill(thrust::device, ngs_82.d_prop,
-            ngs_82.d_prop + (cells.get_d_n() * N_TYPES), 0);
+            ngs_82.d_prop + (h_pm.n_max * N_TYPES), 0);
         thrust::fill(thrust::device, ngs_90.d_prop,
-            ngs_90.d_prop + (cells.get_d_n() * N_TYPES), 0);
+            ngs_90.d_prop + (h_pm.n_max * N_TYPES), 0);
         thrust::fill(thrust::device, ngs_d.d_prop,
-            ngs_d.d_prop + (cells.get_d_n() * N_TYPES), 0);
+            ngs_d.d_prop + (h_pm.n_max * N_TYPES), 0);
 
         // return wall_forces<Cell, boundary_force>(n, d_X, d_dX, 0);
         if (h_pm.adv_switch)
@@ -812,11 +829,11 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
                 d_state);  // generate random noise which we will use later
                            // on to move the cells
             if (h_pm.prolif_switch) {
-                if (time_step % int(h_pm.cont_time / 500) == 0) {
-                    stage_new_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                        cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
-                        cells.d_n, fin.mesh);  // stage new cells
-                }
+                
+                stage_new_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                    cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
+                    cells.d_n, fin.mesh);  // stage new cells
+            
                 cells.take_step<pairwise_force>(0.0, generic_function);
                 proliferation<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                     cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
