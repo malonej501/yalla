@@ -25,7 +25,7 @@ WD = "../run/saves/"
 NSHOW = 0  # no. fins to show in real fin comparison
 EXPORT = False
 SHARE_AXES = False  # share axes in time series plots
-CPROP = 1  # cell property to color by in vedo renderings
+CPROP = 0  # cell property to color by in vedo renderings
 # 0: mech_str, 1: cell_type, 2: in_slow, 3: ngs_A, 4: ngs_B,
 # 5: ngs_Ac, 6: ngs_Bc, 7: ngs_Ad, 8: ngs_Bd
 
@@ -550,17 +550,29 @@ def compare_segmented_real(fin_dir="../data/data_23-06-25", export=False,
     # plt.show()
 
 
-def tissue_properties(run_id):
+def tissue_properties(run_id, property=1):
     """Return properties of the tissue over the entire timecourse, not
-    deducible individual vtk files e.g. maximum no. cell types"""
-    cell_types = []
+    deducible individual vtk files e.g. unique cell types, min/max of a
+    property over timecourse."""
     vtks = load(f"../run/{run_id}/out_0_0_*.vtk")
-    for vtk in vtks:
-        cell_types_i = np.unique(vtk.pointdata["cell_type"])
-        if len(cell_types_i) > len(cell_types):
-            cell_types = cell_types_i  # get the maximum no. cell types
 
-    return cell_types
+    if property == 1:  # get unique cell types
+        properties = []
+        for vtk in vtks:
+            cell_types_i = np.unique(vtk.pointdata["cell_type"])
+            if len(cell_types_i) > len(properties):
+                properties = cell_types_i  # get the maximum no. cell types
+    else:  # other properties - get min and max over timecourse
+        properties = [float('inf'), float('-inf')]
+        for vtk in vtks:
+            min_prop_i = np.min(vtk.pointdata[property])
+            max_prop_i = np.max(vtk.pointdata[property])
+            if min_prop_i < properties[0]:
+                properties[0] = min_prop_i
+            if max_prop_i > properties[1]:
+                properties[1] = max_prop_i
+
+    return properties
 
 
 def plot_sim_tseries_vedo(run_id, n_frames, axes=False):
@@ -591,7 +603,8 @@ def plot_sim_tseries_vedo(run_id, n_frames, axes=False):
 
 def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
     """Plot a course time series of simulation frames using matplotlib."""
-    cell_types = tissue_properties(run_id)
+
+    properties = tissue_properties(run_id, CPROP)
     frames = np.linspace(0, 100, n_frames, dtype=int)
     # frames = np.linspace(10, 70, n_frames, dtype=int)  # for wall-penetrating
     print(frames)
@@ -636,7 +649,7 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
         axs[i].set_yticks([])
         axs[i].axis("off")
     if CPROP == 1:  # add legend only for cell type plots
-        leg = fig.legend(handles, cell_types,
+        leg = fig.legend(handles, properties,
                          loc="outside lower center",
                          title="Cell Type", ncol=3)
         for handle in leg.legend_handles:
@@ -648,8 +661,6 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
             sc, ax=axs, location="bottom", orientation="horizontal",
             fraction=0.05, pad=0.05)
         cbar.set_label(props[CPROP])
-
-    # print(axs[4].get_legend_handles_labels())
 
     plt.savefig(f"{os.path.basename(run_id)}_tseries_mtpl.pdf")
     plt.show()
