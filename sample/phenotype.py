@@ -605,6 +605,7 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
     """Plot a course time series of simulation frames using matplotlib."""
 
     properties = tissue_properties(run_id, CPROP)
+    cmap_disc = matplotlib.cm.get_cmap("viridis", len(properties))
     vmin, vmax = properties[0], properties[1]
     frames = np.linspace(0, 100, n_frames, dtype=int)
     # frames = np.linspace(10, 70, n_frames, dtype=int)  # for wall-penetrating
@@ -634,10 +635,10 @@ def plot_sim_tseries_mtpl(run_id, n_frames, nrow=2, sb=True):
                "prop": frame.pt_mesh.pointdata[props[CPROP]]}
         pts = pd.DataFrame(pts)
         if CPROP == 1:
-            for ct in properties:
+            for j, ct in enumerate(properties):
                 pts_ct = pts[pts["prop"] == ct]
                 sc = axs[i].scatter(
-                    pts_ct["x"], pts_ct["y"], s=5, alpha=0.7,
+                    pts_ct["x"], pts_ct["y"], s=1, alpha=0.7, color=cmap_disc(j),
                     label=ct, rasterized=True)  # rasterize for large data
                 if fr == frames[0]:  # only add legend handles once
                     handles.append(sc)
