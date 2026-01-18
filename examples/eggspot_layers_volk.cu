@@ -108,7 +108,7 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         return dF;  // if cell movement is off, return no forces
 
     // default adhesion and repulsion vals for cell interactions
-    float Rep = d_pm.Rxx * 0.2;  // because t=0.2*day
+    float Rep = d_pm.Rxx * 0.02;  // because dt=0.2*day
     float rep = d_pm.rxx;
 
     // const float interactions[5][5] = {
@@ -144,10 +144,10 @@ __device__ Pt pairwise_force(Pt Xi, Pt r, float dist, int i, int j)
         {{0.01, 0.01}, {0.01, 0.01}, {0.01, 0.01}, {0.032, 0.04}, {0.032, 0.04}}   // Il
     };
 
-    constexpr float time_scale = 0.2 * 0.1; // 1t = 0.2 day, 1dt = 0.1t 
+    // float time_scale = d_pm.dt; // 1 timestep = 1 day
 
     if (d_pm.diff_adh_rep && d_cell_type[i] >= 0 && d_cell_type[j] >= 0) {
-        Rep = interactions[d_cell_type[i]][d_cell_type[j]][0] * time_scale;  
+        Rep = interactions[d_cell_type[i]][d_cell_type[j]][0];// * time_scale;  
         rep = interactions[d_cell_type[i]][d_cell_type[j]][1];        
     }
 
@@ -325,7 +325,7 @@ __global__ void death(
         if ((d_ngs_90[NGS_IDX(1,i)] > 1.25f * d_ngs_90[NGS_IDX(0,i)]) ||
             (d_ngs_d[NGS_IDX(0,i)] >= 2 * d_ngs_d[NGS_IDX(1,i)] &&
              d_ngs_45[NGS_IDX(4,i)] < 3 &&
-            curand_uniform(&d_state[i]) < 0.0333f * 0.2 * 0.1)) { // because of t and dt units
+            curand_uniform(&d_state[i]) < 0.0333f)) { 
              d_cell_type[i] = -1;
          }
      }
@@ -643,22 +643,25 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
         auto x_len = tis.get_maximum().x - tis.get_minimum().x;
         random_rectangle(
             h_pm.init_dist, tis.get_minimum(), tis.get_maximum(), cells);
-        auto new_n =
+
+        auto n_iri = static_cast<int>(x_len / h_pm.init_dist); // no. I stripe cells
+        for (int i = 0; i < n_iri; i++) {  // set cell types
+            cells.h_X[i].x = tis.get_minimum().x + (x_len/n_iri * i);  // I stripe
+            cells.h_X[i].y = (tis.get_maximum().y + tis.get_minimum().y) / 2;
+            cells.h_X[i].z = 0;
+            cell_type.h_prop[i] = 3;
+        }
+
+        auto new_n = // remove cells outside mesh
             thrust::remove_if(thrust::host, cells.h_X, cells.h_X + *cells.h_n,
                 [&tis](float3 x) { return tis.test_exclusion(x); });
         *cells.h_n = std::distance(cells.h_X, new_n);
-        for (int i = 0; i < h_pm.n_0; i++) {  // set cell types
-            // spot cells appear in leftmost 10% of tissue
 
-            float mid = (tis.get_maximum().y + tis.get_minimum().y) / 2;
-            if (cells.h_X[i].y < mid + 0.05 && cells.h_X[i].y > mid -0.05) {
-                cell_type.h_prop[i] = 3;
+        for (int i = n_iri; i < h_pm.n_0; i++) {  // set remaining cell types
+            if (std::rand() % 100 < 10) {
+                cell_type.h_prop[i] = 0; // 10% M cells randomly
             } else {
-                if (std::rand() % 100 < 10) {
-                    cell_type.h_prop[i] = 0; // 10% M cells randomly
-                } else {
-                    cell_type.h_prop[i] = 2; // rest Xl
-                }
+                cell_type.h_prop[i] = 2; // rest Xl
             }
         }
         update_slow_reg(tis, slow_reg);
@@ -804,20 +807,22 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
 
     // Main simulation loop
     for (time_step = 0; time_step <= h_pm.cont_time; time_step++) {
-        if (h_pm.t_grow_switch && time_step > 0 && time_step % 10 == 0) {
-            float stretchfactor = fin.grow(
-                h_pm.t_growth_rate * 0.2 * 10);  // grow the fin by 10% every
-            float3 tis_min = fin.get_minimum();
+        if (h_pm.t_grow_switch && time_step > 0 && time_step % 2 == 0) {
+            // 1 time step = 1 day, growth every 2 days
+            // therefore, per step growth amount = per day rate * 2
+            float growth_amount = h_pm.t_growth_rate * 2;
+            float stretchfactor = fin.grow(growth_amount);
+            float3 tis_min = fin.get_minimum(); 
             float3 tis_max = fin.get_maximum();
             cudaMemcpyToSymbol(d_tis_min, &tis_min, sizeof(float3));
             cudaMemcpyToSymbol(d_tis_max, &tis_max, sizeof(float3));
-            // 10 timesteps
+            
             grow_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
                 cells.get_d_n(), cells.d_X, stretchfactor);
             update_slow_reg(fin, slow_reg);
             cudaMemcpy(d_slow_reg, &slow_reg, 2 * sizeof(float),
                 cudaMemcpyHostToDevice);  // copy to device
-            fin_rays.grow(h_pm.t_growth_rate * 0.2 * 10);
+            fin_rays.grow(growth_amount);
             ray_plane = fin_rays.get_3rd_ray_plane();
             cudaMemcpy(d_ray_plane, &ray_plane, sizeof(Plane),
                 cudaMemcpyHostToDevice);  // copy to device
@@ -828,35 +833,35 @@ int tissue_sim(int argc, char const* argv[], int walk_id = 0, int step = 0,
                 cells.get_d_n(),
                 d_state);  // generate random noise which we will use later
                            // on to move the cells
-            if (h_pm.prolif_switch) {
-                
-                stage_new_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
-                    cells.d_n, fin.mesh);  // stage new cells
-            
-                cells.take_step<pairwise_force>(0.0, generic_function);
-                proliferation<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
-                    cells.d_n, fin.mesh);  // simulate proliferation
-            }
-            if (h_pm.type_switch)
-                cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), d_state, cells.d_X, d_slow_reg,
-                    d_ray_plane);   // switch cell types if
-                                    // conditions are met
-            if (h_pm.death_switch)  // death occurs once per day - 20 days total
-                                    // if (time_step % int(h_pm.cont_time / 20)
-                                    // == 0) {
-                death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
-                    cells.get_d_n(), d_state, cells.d_X, cells.d_n);
-            // }
-            compact_cells_with_remove_if(cells.get_d_n(), cells.d_X, W.d_prop,
-                cell_type.d_prop, mech_str.d_prop, in_slow.d_prop, ngs_45.d_prop,
-                ngs_75.d_prop, ngs_82.d_prop, ngs_90.d_prop, ngs_d.d_prop, cells.d_n);
-
             cells.take_step<pairwise_force, friction_on_background>(
                 h_pm.dt, generic_function);
         }
+
+        if (h_pm.prolif_switch) {
+            stage_new_cells<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
+                cells.d_n, fin.mesh);  // stage new cells
+        
+            cells.take_step<pairwise_force>(0.0, generic_function);
+            proliferation<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                cells.get_d_n(), d_state, cells.d_X, cells.d_old_v,
+                cells.d_n, fin.mesh);  // simulate proliferation
+        }
+        if (h_pm.type_switch)
+            cell_switching<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                cells.get_d_n(), d_state, cells.d_X, d_slow_reg,
+                d_ray_plane);   // switch cell types if
+                                // conditions are met
+        if (h_pm.death_switch)  // death occurs once per day - 20 days total
+                                // if (time_step % int(h_pm.cont_time / 20)
+                                // == 0) {
+            death<<<(cells.get_d_n() + 128 - 1) / 128, 128>>>(
+                cells.get_d_n(), d_state, cells.d_X, cells.d_n);
+        // }
+        compact_cells_with_remove_if(cells.get_d_n(), cells.d_X, W.d_prop,
+            cell_type.d_prop, mech_str.d_prop, in_slow.d_prop, ngs_45.d_prop,
+            ngs_75.d_prop, ngs_82.d_prop, ngs_90.d_prop, ngs_d.d_prop, cells.d_n);
+    
 
         if (!last_vtk_only &&
                 time_step % int(h_pm.cont_time / h_pm.no_frames) == 0 ||
