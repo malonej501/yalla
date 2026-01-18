@@ -239,18 +239,6 @@ __global__ void proliferation(int n_cells, curandState* d_state, float3* d_X,
              d_cell_type[n] = 0;  
          }
      }
-    //  if (d_cell_type[i] == -2) { // M staging
-    //     if (d_ngs_82[NGS_IDX(0,i)] + d_ngs_82[NGS_IDX(1,i)] == 0){
-    //         int n = atomicAdd(d_n_cells, 1);
-    //          float theta = curand_uniform(&d_state[i]) * 2 * M_PI;
-    //          d_X[n].x = d_X[i].x + (d_pm.div_dist * cosf(theta));
-    //          d_X[n].y = d_X[i].y + (d_pm.div_dist * sinf(theta));
-    //          d_X[n].z = 0;
-    //          d_old_v[n] = d_old_v[i];
-    //          d_mech_str[n] = 0.0;
-    //          d_cell_type[n] = 0;  
-    //     }
-    // }
     if (d_cell_type[i] == 1){ // Xd
         if (d_ngs_82[NGS_IDX(1,i)] + d_ngs_82[NGS_IDX(2,i)] <= 6) {
             int n = atomicAdd(d_n_cells, 1);
